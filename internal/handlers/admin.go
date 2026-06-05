@@ -12,7 +12,7 @@ import (
 
 type Admin struct {
 	Cfg   config.Config
-	Audit *auditlog.MemoryStore
+	Audit *auditlog.Store
 }
 
 func (a *Admin) ListAPIAuditLogs(c *gin.Context) {
