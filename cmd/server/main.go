@@ -9,8 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
-
+	"iag-mes/backend/internal/auditlog"
 	"iag-mes/backend/internal/config"
 	"iag-mes/backend/internal/events"
 	"iag-mes/backend/internal/handlers"
@@ -21,25 +20,14 @@ func main() {
 	pub := events.NewPublisher(cfg.KafkaBrokers, cfg.KafkaTopic, cfg.KafkaClientID)
 	defer pub.Close()
 
-	prod := &handlers.Production{Pub: pub}
-
-	gin.SetMode(gin.ReleaseMode)
-	r := gin.New()
-	r.Use(gin.Recovery())
-
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": cfg.ServiceName})
-	})
-	r.GET("/ready", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ready"})
+	auditStore := auditlog.NewMemoryStore(500)
+	router := handlers.NewRouter(handlers.RouterDeps{
+		Cfg:   cfg,
+		Pub:   pub,
+		Audit: auditStore,
 	})
 
-	v1 := r.Group("/api/v1")
-	{
-		v1.POST("/production-orders", prod.PostProductionOrder)
-	}
-
-	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r, ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: ":" + cfg.Port, Handler: router, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		log.Printf("mes listening on :%s", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
