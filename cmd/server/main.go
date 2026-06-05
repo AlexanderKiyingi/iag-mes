@@ -13,12 +13,15 @@ import (
 
 	"iag-mes/backend/internal/config"
 	"iag-mes/backend/internal/events"
+	"iag-mes/backend/internal/handlers"
 )
 
 func main() {
 	cfg := config.Load()
 	pub := events.NewPublisher(cfg.KafkaBrokers, cfg.KafkaTopic, cfg.KafkaClientID)
 	defer pub.Close()
+
+	prod := &handlers.Production{Pub: pub}
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -33,34 +36,7 @@ func main() {
 
 	v1 := r.Group("/api/v1")
 	{
-		v1.POST("/production-orders", func(c *gin.Context) {
-			var body struct {
-				BatchBusinessID string  `json:"batch_business_id" binding:"required"`
-				Stage           string  `json:"stage" binding:"required"`
-				Facility        string  `json:"facility"`
-				KgIn, KgOut     float64 `json:"kg_in"`
-			}
-			if err := c.ShouldBindJSON(&body); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			eventType := mapStageEvent(body.Stage)
-			if eventType == "" {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "unknown stage"})
-				return
-			}
-			data := map[string]any{
-				"batch_business_id": body.BatchBusinessID,
-				"facility":          body.Facility,
-				"kg_in":             body.KgIn,
-				"kg_out":            body.KgOut,
-			}
-			if err := pub.Publish(c.Request.Context(), eventType, data); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "kafka publish failed"})
-				return
-			}
-			c.JSON(http.StatusCreated, gin.H{"status": "published", "event_type": eventType})
-		})
+		v1.POST("/production-orders", prod.PostProductionOrder)
 	}
 
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r, ReadHeaderTimeout: 10 * time.Second}
@@ -77,17 +53,4 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
-}
-
-func mapStageEvent(stage string) string {
-	switch stage {
-	case "wetmill", "wet_mill":
-		return "mes.wetmill.completed"
-	case "drying", "dry":
-		return "mes.drying.completed"
-	case "drymill", "dry_mill":
-		return "mes.drymill.completed"
-	default:
-		return ""
-	}
 }
