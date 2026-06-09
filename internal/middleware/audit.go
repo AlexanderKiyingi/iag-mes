@@ -9,6 +9,21 @@ import (
 	"iag-mes/backend/internal/auditlog"
 )
 
+func ActorName(c *gin.Context) string {
+	if claims, ok := PlatformClaims(c); ok && claims != nil {
+		if n := strings.TrimSpace(claims.Name); n != "" {
+			return n
+		}
+		if e := strings.TrimSpace(claims.Email); e != "" {
+			return e
+		}
+		if claims.Subject != "" {
+			return claims.Subject
+		}
+	}
+	return "anonymous"
+}
+
 func RequestAudit(store *auditlog.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -17,7 +32,7 @@ func RequestAudit(store *auditlog.Store) gin.HandlerFunc {
 			return
 		}
 		path := c.Request.URL.Path
-		if path == "/health" || path == "/healthz" || path == "/ready" {
+		if isPublicProbePath(path) {
 			return
 		}
 		_ = store.LogAPIRequest(
@@ -25,19 +40,9 @@ func RequestAudit(store *auditlog.Store) gin.HandlerFunc {
 			c.Request.Method,
 			path,
 			c.Writer.Status(),
-			ActorLabel(c),
+			ActorName(c),
 			int(time.Since(start).Milliseconds()),
 			c.ClientIP(),
 		)
 	}
-}
-
-func ActorLabel(c *gin.Context) string {
-	if v := strings.TrimSpace(c.GetHeader("X-User-Email")); v != "" {
-		return v
-	}
-	if strings.HasPrefix(c.GetHeader("Authorization"), "Bearer ") {
-		return "authenticated"
-	}
-	return "anonymous"
 }
