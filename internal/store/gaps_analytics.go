@@ -192,7 +192,7 @@ func (s *Store) DailyProductionSummary(ctx context.Context, plantCode string, da
 	var kgOut float64
 	err := s.pool.QueryRow(ctx, `
 		SELECT COUNT(*)::int, COALESCE(SUM(kg_out), 0)
-		FROM mes_production_runs
+		FROM prod_production_runs
 		WHERE status = 'completed' AND completed_at >= $1 AND completed_at < $2
 		  AND ($3 = '' OR facility ILIKE $3 OR facility = $3)`,
 		start, end, plantCode).Scan(&runCount, &kgOut)
@@ -226,7 +226,7 @@ func (s *Store) QualitySummaryFromRuns(ctx context.Context, since time.Time, lim
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT batch_business_id, process, kg_out, moisture, status, completed_at
-		FROM mes_production_runs
+		FROM prod_production_runs
 		WHERE completed_at >= $1 AND status = 'completed'
 		ORDER BY completed_at DESC
 		LIMIT $2`, since, limit)
@@ -271,6 +271,6 @@ func (s *Store) QualitySummaryFromRuns(ctx context.Context, since time.Time, lim
 		"batch_count":    len(batches),
 		"avg_moisture":   avgMoisture,
 		"recent_batches": batches,
-		"note":           fmt.Sprintf("Full SPC and cup scores live in quality-control; %d recent MES runs shown", len(batches)),
+		"note":           fmt.Sprintf("Full SPC and cup scores live in quality-control; %d recent production runs shown", len(batches)),
 	}, rows.Err()
 }
