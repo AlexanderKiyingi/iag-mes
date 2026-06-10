@@ -156,7 +156,8 @@ func (a *API) PostProductionOrder(c *gin.Context) {
 		Stage           string  `json:"stage" binding:"required"`
 		Action          string  `json:"action"`
 		Facility        string  `json:"facility"`
-		KgIn, KgOut     float64 `json:"kg_in"`
+		KgIn            float64 `json:"kg_in"`
+		KgOut           float64 `json:"kg_out"`
 		Moisture        float64 `json:"moisture"`
 		BedID           string  `json:"bed_id"`
 		GradePrelim     string  `json:"grade_prelim"`
