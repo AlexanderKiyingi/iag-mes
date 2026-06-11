@@ -21,11 +21,13 @@ const (
 	TypeDowntimeStarted = "mes.downtime.started"
 	TypeDowntimeEnded   = "mes.downtime.ended"
 	TypeWorkOrderDone   = "mes.workorder.completed"
+
+	TypeAlertRaised = "mes.alert.raised"
 )
 
 func TopicForEvent(eventType string) string {
 	switch eventType {
-	case TypeDowntimeStarted, TypeDowntimeEnded, TypeWorkOrderDone:
+	case TypeDowntimeStarted, TypeDowntimeEnded, TypeWorkOrderDone, TypeAlertRaised:
 		return TopicOperations
 	default:
 		return TopicProduction

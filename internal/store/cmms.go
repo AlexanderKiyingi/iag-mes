@@ -217,6 +217,16 @@ func (s *Store) CreateDowntimeEvent(ctx context.Context, d DowntimeEvent) (*Down
 		if err := s.bus.PublishTx(ctx, tx, events.TypeDowntimeStarted, data, d.AssetTag); err != nil {
 			return nil, err
 		}
+		if recipient := events.DefaultNotifyRecipient(); recipient != "" {
+			body := fmt.Sprintf("Asset %s reported downtime", d.AssetTag)
+			if d.Reason != "" {
+				body = fmt.Sprintf("Asset %s reported downtime: %s", d.AssetTag, d.Reason)
+			}
+			s.bus.PublishAlert(ctx, "", recipient, "mes.alert", map[string]string{
+				"Title": "Machine downtime started",
+				"Body":  body,
+			}, d.AssetTag)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err

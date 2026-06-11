@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -116,6 +117,40 @@ func (b *Bus) Publish(ctx context.Context, eventType string, data map[string]any
 	if err := b.publishDirect(ctx, topic, evt, key); err != nil {
 		slog.Warn("mes event publish failed", "type", eventType, "err", err)
 	}
+}
+
+// PublishAlert emits mes.alert.raised (routed to iag.operations) for the
+// notifications policy consumer, using the shared
+// {channel,recipient,templateId,variables} envelope.
+func (b *Bus) PublishAlert(ctx context.Context, channel, recipient, templateID string, variables map[string]string, key string) {
+	if b == nil || !b.Enabled() || recipient == "" || templateID == "" {
+		return
+	}
+	vars := map[string]any{}
+	for k, v := range variables {
+		vars[k] = v
+	}
+	if channel == "" {
+		channel = defaultNotifyChannel()
+	}
+	b.Publish(ctx, TypeAlertRaised, map[string]any{
+		"channel":    channel,
+		"recipient":  recipient,
+		"templateId": templateID,
+		"variables":  vars,
+	}, key)
+}
+
+func defaultNotifyChannel() string {
+	if ch := strings.TrimSpace(os.Getenv("NOTIFY_CHANNEL")); ch != "" {
+		return ch
+	}
+	return "email"
+}
+
+// DefaultNotifyRecipient is the fallback recipient (the ops desk).
+func DefaultNotifyRecipient() string {
+	return strings.TrimSpace(os.Getenv("NOTIFY_DEFAULT_RECIPIENT"))
 }
 
 func (b *Bus) PublishTx(ctx context.Context, tx pgx.Tx, eventType string, data map[string]any, key string) error {
