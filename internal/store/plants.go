@@ -49,6 +49,11 @@ type Asset struct {
 	OEEPct            *float64       `json:"oee_pct,omitempty"`
 	MTBFHours         *float64       `json:"mtbf_hours,omitempty"`
 	SensorCount       int            `json:"sensor_count"`
+	PurchasedOn       *time.Time     `json:"purchased_on,omitempty"`
+	Location          string         `json:"location"`
+	Capacity          *float64       `json:"capacity,omitempty"`
+	CapacityUnit      string         `json:"capacity_unit"`
+	PlantID           *uuid.UUID     `json:"plant_id,omitempty"`
 	Attrs             map[string]any `json:"attrs"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
@@ -177,7 +182,8 @@ func (s *Store) CreateSection(ctx context.Context, plantCode string, sec Section
 func (s *Store) ListAssets(ctx context.Context, filter AssetFilter) ([]Asset, error) {
 	q := `
 		SELECT a.id, a.section_id, p.code, sec.code, a.tag, a.name, a.category, a.criticality, a.status,
-		       a.vendor_party_id, a.warehouse_asset_tag, a.oee_pct, a.mtbf_hours, a.sensor_count, a.attrs,
+		       a.vendor_party_id, a.warehouse_asset_tag, a.oee_pct, a.mtbf_hours, a.sensor_count,
+		       a.purchased_on, a.location, a.capacity, a.capacity_unit, a.plant_id, a.attrs,
 		       a.created_at, a.updated_at
 		FROM mes_assets a
 		JOIN mes_sections sec ON sec.id = a.section_id
@@ -218,7 +224,8 @@ type AssetFilter struct {
 func (s *Store) GetAssetByTag(ctx context.Context, tag string) (*Asset, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT a.id, a.section_id, p.code, sec.code, a.tag, a.name, a.category, a.criticality, a.status,
-		       a.vendor_party_id, a.warehouse_asset_tag, a.oee_pct, a.mtbf_hours, a.sensor_count, a.attrs,
+		       a.vendor_party_id, a.warehouse_asset_tag, a.oee_pct, a.mtbf_hours, a.sensor_count,
+		       a.purchased_on, a.location, a.capacity, a.capacity_unit, a.plant_id, a.attrs,
 		       a.created_at, a.updated_at
 		FROM mes_assets a
 		JOIN mes_sections sec ON sec.id = a.section_id
@@ -234,11 +241,15 @@ func (s *Store) CreateAsset(ctx context.Context, sectionID uuid.UUID, a Asset) (
 	}
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO mes_assets (section_id, tag, name, category, criticality, status, vendor_party_id,
-		                        warehouse_asset_tag, oee_pct, mtbf_hours, sensor_count, attrs)
+		                        warehouse_asset_tag, oee_pct, mtbf_hours, sensor_count, attrs,
+		                        purchased_on, location, capacity, capacity_unit, plant_id)
 		VALUES ($1, $2, $3, $4, COALESCE(NULLIF($5,''), 'C'), COALESCE(NULLIF($6,''), 'idle'),
-		        $7, $8, $9, $10, COALESCE($11, 0), COALESCE($12::jsonb, '{}'))
+		        $7, $8, $9, $10, COALESCE($11, 0), COALESCE($12::jsonb, '{}'),
+		        $13, COALESCE($14, ''), $15, COALESCE($16, ''),
+		        COALESCE($17, (SELECT plant_id FROM mes_sections WHERE id = $1)))
 		RETURNING id`, sectionID, a.Tag, a.Name, a.Category, a.Criticality, a.Status,
-		a.VendorPartyID, a.WarehouseAssetTag, a.OEEPct, a.MTBFHours, a.SensorCount, attrs).Scan(&a.ID)
+		a.VendorPartyID, a.WarehouseAssetTag, a.OEEPct, a.MTBFHours, a.SensorCount, attrs,
+		a.PurchasedOn, a.Location, a.Capacity, a.CapacityUnit, a.PlantID).Scan(&a.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -265,10 +276,27 @@ func (s *Store) PatchAsset(ctx context.Context, tag string, patch AssetPatch) (*
 	if patch.Attrs != nil {
 		cur.Attrs = patch.Attrs
 	}
+	if patch.PurchasedOn != nil {
+		cur.PurchasedOn = patch.PurchasedOn
+	}
+	if patch.Location != nil {
+		cur.Location = *patch.Location
+	}
+	if patch.Capacity != nil {
+		cur.Capacity = patch.Capacity
+	}
+	if patch.CapacityUnit != nil {
+		cur.CapacityUnit = *patch.CapacityUnit
+	}
+	if patch.PlantID != nil {
+		cur.PlantID = patch.PlantID
+	}
 	attrs, _ := json.Marshal(cur.Attrs)
 	_, err = s.pool.Exec(ctx, `
-		UPDATE mes_assets SET name=$2, status=$3, oee_pct=$4, mtbf_hours=$5, attrs=$6::jsonb, updated_at=NOW()
-		WHERE tag=$1`, tag, cur.Name, cur.Status, cur.OEEPct, cur.MTBFHours, attrs)
+		UPDATE mes_assets SET name=$2, status=$3, oee_pct=$4, mtbf_hours=$5, attrs=$6::jsonb,
+		    purchased_on=$7, location=$8, capacity=$9, capacity_unit=$10, plant_id=$11, updated_at=NOW()
+		WHERE tag=$1`, tag, cur.Name, cur.Status, cur.OEEPct, cur.MTBFHours, attrs,
+		cur.PurchasedOn, cur.Location, cur.Capacity, cur.CapacityUnit, cur.PlantID)
 	if err != nil {
 		return nil, err
 	}
@@ -276,11 +304,16 @@ func (s *Store) PatchAsset(ctx context.Context, tag string, patch AssetPatch) (*
 }
 
 type AssetPatch struct {
-	Name      *string
-	Status    *string
-	OEEPct    *float64
-	MTBFHours *float64
-	Attrs     map[string]any
+	Name         *string        `json:"name"`
+	Status       *string        `json:"status"`
+	OEEPct       *float64       `json:"oee_pct"`
+	MTBFHours    *float64       `json:"mtbf_hours"`
+	Attrs        map[string]any `json:"attrs"`
+	PurchasedOn  *time.Time     `json:"purchased_on"`
+	Location     *string        `json:"location"`
+	Capacity     *float64       `json:"capacity"`
+	CapacityUnit *string        `json:"capacity_unit"`
+	PlantID      *uuid.UUID     `json:"plant_id"`
 }
 
 type assetScanner interface {
@@ -292,7 +325,7 @@ func scanAssetRow(row assetScanner) (*Asset, error) {
 	var attrs []byte
 	err := row.Scan(&a.ID, &a.SectionID, &a.PlantCode, &a.SectionCode, &a.Tag, &a.Name, &a.Category,
 		&a.Criticality, &a.Status, &a.VendorPartyID, &a.WarehouseAssetTag, &a.OEEPct, &a.MTBFHours,
-		&a.SensorCount, &attrs, &a.CreatedAt, &a.UpdatedAt)
+		&a.SensorCount, &a.PurchasedOn, &a.Location, &a.Capacity, &a.CapacityUnit, &a.PlantID, &attrs, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, ErrNotFound
@@ -311,7 +344,7 @@ func scanAssets(rows pgx.Rows) ([]Asset, error) {
 		var attrs []byte
 		if err := rows.Scan(&a.ID, &a.SectionID, &a.PlantCode, &a.SectionCode, &a.Tag, &a.Name, &a.Category,
 			&a.Criticality, &a.Status, &a.VendorPartyID, &a.WarehouseAssetTag, &a.OEEPct, &a.MTBFHours,
-			&a.SensorCount, &attrs, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&a.SensorCount, &a.PurchasedOn, &a.Location, &a.Capacity, &a.CapacityUnit, &a.PlantID, &attrs, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		a.Attrs = scanAttrs(attrs)
