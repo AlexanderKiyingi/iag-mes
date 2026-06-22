@@ -91,7 +91,7 @@ func (a *API) CreateAsset(c *gin.Context) {
 		SectionID uuid.UUID `json:"section_id" binding:"required"`
 		store.Asset
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -105,7 +105,7 @@ func (a *API) CreateAsset(c *gin.Context) {
 
 func (a *API) PatchAsset(c *gin.Context) {
 	var patch store.AssetPatch
-	if err := c.ShouldBindJSON(&patch); err != nil {
+	if err := bindJSONCoerced(c, &patch); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

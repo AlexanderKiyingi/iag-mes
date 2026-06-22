@@ -69,7 +69,7 @@ func (a *API) ListDowntimeEvents(c *gin.Context) {
 
 func (a *API) CreateDowntimeEvent(c *gin.Context) {
 	var body store.DowntimeEvent
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := bindJSONCoerced(c, &body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
