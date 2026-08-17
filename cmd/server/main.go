@@ -84,13 +84,12 @@ func main() {
 			Issuer:   cfg.JWTIssuer,
 			Audience: cfg.Audience,
 		})
-		initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		if err := verifier.Refresh(initCtx); err != nil {
-			cancel()
-			log.Fatalf("jwks refresh: %v", err)
-		}
-		cancel()
-		go jwksRefreshLoop(verifier)
+		// Tolerate transient JWKS failure on boot. A hard exit here turns an
+		// auth service redeploy into a crash loop for this service, and the
+		// container never gets far enough to serve /health — which reads as
+		// "mes is down" rather than "auth was briefly unavailable".
+		bootstrapJWKS(verifier)
+		go jwksRefreshLoop(ctx, verifier)
 	}
 
 	platformAuth := middleware.NewPlatformAuth(middleware.PlatformAuthOptions{
@@ -154,14 +153,73 @@ func main() {
 	_ = srv.Shutdown(shutdownCtx)
 }
 
-func jwksRefreshLoop(v *authclient.Verifier) {
-	ticker := time.NewTicker(15 * time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		if err := v.Refresh(ctx); err != nil {
-			log.Printf("jwks refresh: %v", err)
-		}
+// bootstrapJWKS performs the initial JWKS fetch with exponential backoff so a
+// transient failure (auth cold start, redeploy, network blip) does not kill the
+// container. Budget ~2 minutes; returns once keys are loaded or the budget is
+// spent, and the caller starts the refresh loop either way.
+func bootstrapJWKS(v *authclient.Verifier) {
+	backoff := time.Second
+	const (
+		maxBackoff   = 15 * time.Second
+		totalBudget  = 2 * time.Minute
+		perAttemptTO = 10 * time.Second
+	)
+	deadline := time.Now().Add(totalBudget)
+	for attempt := 1; ; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(context.Background(), perAttemptTO)
+		err := v.Refresh(attemptCtx)
 		cancel()
+		if err == nil {
+			log.Printf("jwks bootstrap ok (attempt %d)", attempt)
+			return
+		}
+		if time.Now().After(deadline) {
+			log.Printf("jwks bootstrap budget exhausted after %d attempts; continuing with empty key set: %v", attempt, err)
+			return
+		}
+		log.Printf("jwks bootstrap failed (attempt %d), retrying in %s: %v", attempt, backoff, err)
+		time.Sleep(backoff)
+		if backoff < maxBackoff {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
+}
+
+// jwksRefreshLoop keeps the key set current at two speeds: the steady rotation
+// interval once keys are loaded, and a much shorter one while the set is empty.
+// Empty is not a mild degradation — every authenticated request fails closed —
+// so recovery has to be seconds, not a quarter of an hour.
+func jwksRefreshLoop(ctx context.Context, v *authclient.Verifier) {
+	const (
+		steadyInterval   = 15 * time.Minute
+		degradedInterval = 15 * time.Second
+	)
+	for {
+		wait := steadyInterval
+		if !v.HasKeys() {
+			wait = degradedInterval
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+
+		hadKeys := v.HasKeys()
+		refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := v.Refresh(refreshCtx)
+		cancel()
+		switch {
+		case err != nil && hadKeys:
+			// Previous key set is still in memory; tokens keep verifying.
+			log.Printf("jwks refresh failed; serving with the previous key set: %v", err)
+		case err != nil:
+			log.Printf("jwks still unavailable; all authenticated requests are being rejected: %v", err)
+		case !hadKeys:
+			log.Printf("jwks recovered; token verification restored")
+		}
 	}
 }
