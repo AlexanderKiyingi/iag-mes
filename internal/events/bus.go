@@ -40,10 +40,10 @@ type Bus struct {
 }
 
 type Config struct {
-	Brokers          []string
-	Enabled          bool
-	ProductionTopic  string
-	OperationsTopic  string
+	Brokers         []string
+	Enabled         bool
+	ProductionTopic string
+	OperationsTopic string
 }
 
 func New(cfg Config) *Bus {
@@ -222,8 +222,11 @@ func (b *Bus) publishDirect(ctx context.Context, topic string, evt PlatformEvent
 	if key == "" {
 		key = evt.ID
 	}
+	// No Topic on the Message: the writer is dedicated to one topic and already
+	// carries it, and kafka-go rejects a Message that sets Topic as well ("Topic
+	// must not be specified for both Writer and Message"). It fails before
+	// sending, so every publish errored while looking transient to the retry loop.
 	return w.WriteMessages(ctx, kafka.Message{
-		Topic: topic,
 		Key:   []byte(key),
 		Value: body,
 		Headers: []kafka.Header{
