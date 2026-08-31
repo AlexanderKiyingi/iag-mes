@@ -46,7 +46,7 @@ func (a *API) PlatformStatus(c *gin.Context) {
 		"service":    a.Cfg.ServiceName,
 		"audience":   a.Cfg.Audience,
 		"gateway":    a.Cfg.GatewayAPIPrefix,
-		"event_bus":  a.Bus != nil && a.Bus.Enabled(),
+		"event_bus_configured": a.Bus != nil && a.Bus.Enabled(),
 		"auth_mode":  a.Cfg.AuthMode,
 		"integrations": gin.H{
 			"enabled":   a.Cfg.IntegrationsEnabled,

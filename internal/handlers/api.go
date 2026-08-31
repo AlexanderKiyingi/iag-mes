@@ -33,7 +33,12 @@ func (a *API) Ready(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "degraded", "database": false})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "ready", "database": true, "event_bus": a.Bus != nil && a.Bus.Enabled()})
+	// event_bus_configured, not event_bus: Bus.Enabled() reports only
+	// that brokers were configured, and is true for a producer that has
+	// never reached a broker. Reporting it as "event_bus" made a service
+	// with an unreachable broker look connected, which is how a
+	// platform-wide Kafka outage went unnoticed behind green probes.
+	c.JSON(http.StatusOK, gin.H{"status": "ready", "database": true, "event_bus_configured": a.Bus != nil && a.Bus.Enabled()})
 }
 
 func writeStoreError(c *gin.Context, err error) {
