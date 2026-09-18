@@ -3,8 +3,6 @@ package integrations
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,13 +38,6 @@ func (b *Bridge) Status() map[string]bool {
 	}
 }
 
-type CompleteHooks struct {
-	WarehouseOutput *clients.ProductionOutputRequest
-	WarehouseConsume *clients.ProductionConsumeRequest
-	SubmitQCSample  bool
-	SampleID        string
-}
-
 func (b *Bridge) ValidateBatch(ctx context.Context, batchBusinessID string) error {
 	if b == nil || !b.Cfg.AutoValidateBatch || b.SCM == nil || !b.SCM.Enabled() {
 		_ = b.Store.UpsertBatchRef(ctx, batchBusinessID, "manual")
@@ -61,46 +52,6 @@ func (b *Bridge) ValidateBatch(ctx context.Context, batchBusinessID string) erro
 		return store.ErrBadInput
 	}
 	return b.Store.UpsertBatchRef(ctx, batchBusinessID, "scm")
-}
-
-func (b *Bridge) AfterRunComplete(ctx context.Context, run *store.ProductionRun, hooks CompleteHooks) {
-	if b == nil || run == nil {
-		return
-	}
-	if b.Cfg.AutoWarehouseOnComplete && hooks.WarehouseOutput != nil && b.Warehouse != nil && b.Warehouse.Enabled() {
-		resp, err := b.Warehouse.ProductionOutput(ctx, *hooks.WarehouseOutput)
-		status := "ok"
-		errMsg := ""
-		if err != nil {
-			status = "failed"
-			errMsg = err.Error()
-			slog.Warn("warehouse output failed", "batch", run.BatchBusinessID, "err", err)
-		}
-		_ = b.Store.RecordWarehouseHandoff(ctx, run.BatchBusinessID, "output", hooks.WarehouseOutput, status, resp, errMsg)
-		b.logCall(ctx, "warehouse", "production_output", run.BatchBusinessID, err == nil, hooks.WarehouseOutput, resp, err)
-	}
-	if b.Cfg.AutoWarehouseOnComplete && hooks.WarehouseConsume != nil && b.Warehouse != nil && b.Warehouse.Enabled() {
-		resp, err := b.Warehouse.ProductionConsume(ctx, *hooks.WarehouseConsume)
-		status := "ok"
-		errMsg := ""
-		if err != nil {
-			status = "failed"
-			errMsg = err.Error()
-		}
-		_ = b.Store.RecordWarehouseHandoff(ctx, run.BatchBusinessID, "consume", hooks.WarehouseConsume, status, resp, errMsg)
-		b.logCall(ctx, "warehouse", "production_consume", run.BatchBusinessID, err == nil, hooks.WarehouseConsume, resp, err)
-	}
-	if (b.Cfg.AutoQCOnComplete || hooks.SubmitQCSample) && b.QC != nil && b.QC.Enabled() {
-		sampleID := hooks.SampleID
-		if sampleID == "" {
-			sampleID = fmt.Sprintf("SMP-%s-%s", run.BatchBusinessID, time.Now().UTC().Format("20060102"))
-		}
-		resp, err := b.QC.SubmitSample(ctx, run.BatchBusinessID, sampleID)
-		b.logCall(ctx, "qc", "submit_sample", run.BatchBusinessID, err == nil, map[string]any{"sample_id": sampleID}, resp, err)
-		if err == nil {
-			_ = b.Store.RecordQCHandoff(ctx, run.BatchBusinessID, sampleID, run.ID)
-		}
-	}
 }
 
 func (b *Bridge) SyncERPProductionOrders(ctx context.Context) (int, error) {

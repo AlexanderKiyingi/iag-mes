@@ -90,12 +90,12 @@ func (s *Store) RecordWarehouseHandoff(ctx context.Context, batchID, operation s
 	return err
 }
 
-func (s *Store) RecordQCHandoff(ctx context.Context, batchID, sampleID string, runID uuid.UUID) error {
+func (s *Store) RecordQCHandoff(ctx context.Context, batchID, sampleID string) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO mes_qc_handoffs (batch_business_id, sample_id, run_id, status)
-		VALUES ($1,$2,$3,'submitted')
+		INSERT INTO mes_qc_handoffs (batch_business_id, sample_id, status)
+		VALUES ($1,$2,'submitted')
 		ON CONFLICT (batch_business_id, sample_id) DO NOTHING`,
-		batchID, sampleID, runID)
+		batchID, sampleID)
 	return err
 }
 

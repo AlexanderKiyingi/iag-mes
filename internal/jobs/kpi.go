@@ -9,6 +9,12 @@ import (
 )
 
 // RollupKPIs computes simple plant KPI snapshots from asset OEE and open work orders.
+//
+// mes_assets.oee_pct is no longer typed by hand: iag-production computes
+// OEE per asset from its run time log and outputs and the consumer writes
+// it here on every production.measures.rolled_up (see
+// store.ApplyProductionRollup). OEE-01 is therefore the plant average of
+// production's figures.
 func RollupKPIs(ctx context.Context, st *store.Store, plantCode string) (int, error) {
 	assets, err := st.ListAssets(ctx, store.AssetFilter{PlantCode: plantCode})
 	if err != nil {

@@ -2,25 +2,24 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"time"
 )
 
 type ReliabilityAsset struct {
-	AssetTag   string  `json:"asset_tag"`
-	MTBFHours  float64 `json:"mtbf_hours"`
-	MTTRHours  float64 `json:"mttr_hours"`
+	AssetTag        string  `json:"asset_tag"`
+	MTBFHours       float64 `json:"mtbf_hours"`
+	MTTRHours       float64 `json:"mttr_hours"`
 	AvailabilityPct float64 `json:"availability_pct"`
-	FailureCount int     `json:"failure_count"`
-	Status     string  `json:"status"`
+	FailureCount    int     `json:"failure_count"`
+	Status          string  `json:"status"`
 }
 
 type DowntimeParetoRow struct {
-	Category   string  `json:"category"`
-	Reason     string  `json:"reason"`
-	Events     int     `json:"events"`
-	Minutes    float64 `json:"minutes"`
-	SharePct   float64 `json:"share_pct"`
+	Category string  `json:"category"`
+	Reason   string  `json:"reason"`
+	Events   int     `json:"events"`
+	Minutes  float64 `json:"minutes"`
+	SharePct float64 `json:"share_pct"`
 }
 
 type ShiftMetricRow struct {
@@ -161,20 +160,22 @@ func (s *Store) SixBigLosses(ctx context.Context, since time.Time) ([]SixBigLoss
 	return items, rows.Err()
 }
 
+// ShiftAnalysis compares shifts on production's SHIFT_OUTPUT_KG snapshots,
+// projected here from production.measures.rolled_up. Until 010 this read
+// mes_shift_logs, a table no handler ever wrote.
 func (s *Store) ShiftAnalysis(ctx context.Context, plantCode string, since time.Time) ([]ShiftMetricRow, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT shift_name,
-		       COUNT(*)::int,
-		       COALESCE(AVG(output_kg), 0)
-		FROM mes_shift_logs
-		WHERE plant_code = $1 AND shift_date >= $2::date
-		GROUP BY shift_name
-		ORDER BY shift_name`, plantCode, since)
+		SELECT scope_key, COUNT(*)::int, COALESCE(AVG(value), 0)::float8
+		FROM mes_kpi_snapshots
+		WHERE source = 'production' AND scope_type = 'shift' AND kpi_code = 'SHIFT_OUTPUT_KG'
+		  AND plant_code = $1 AND recorded_at >= $2
+		GROUP BY scope_key
+		ORDER BY scope_key`, plantCode, since)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ShiftMetricRow
+	out := []ShiftMetricRow{}
 	for rows.Next() {
 		var row ShiftMetricRow
 		if err := rows.Scan(&row.ShiftName, &row.Samples, &row.AvgOutput); err != nil {
@@ -185,20 +186,31 @@ func (s *Store) ShiftAnalysis(ctx context.Context, plantCode string, since time.
 	return out, rows.Err()
 }
 
+// DailyProductionSummary reads the plant-day measures production publishes
+// (PROD_* snapshots) plus MES's own downtime events. It used to query
+// prod_production_runs across the schema boundary.
 func (s *Store) DailyProductionSummary(ctx context.Context, plantCode string, day time.Time) (map[string]any, error) {
 	start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
-	var runCount int
-	var kgOut float64
-	err := s.pool.QueryRow(ctx, `
-		SELECT COUNT(*)::int, COALESCE(SUM(kg_out), 0)
-		FROM prod_production_runs
-		WHERE status = 'completed' AND completed_at >= $1 AND completed_at < $2
-		  AND ($3 = '' OR facility ILIKE $3 OR facility = $3)`,
-		start, end, plantCode).Scan(&runCount, &kgOut)
+	measures := map[string]float64{}
+	rows, err := s.pool.Query(ctx, `
+		SELECT kpi_code, value::float8 FROM mes_kpi_snapshots
+		WHERE source = 'production' AND scope_type = 'plant' AND plant_code = $1
+		  AND kpi_code LIKE 'PROD_%' AND recorded_at >= $2 - INTERVAL '12 hours' AND recorded_at < $3`,
+		plantCode, start, end)
 	if err != nil {
 		return nil, err
 	}
+	for rows.Next() {
+		var code string
+		var v float64
+		if err := rows.Scan(&code, &v); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		measures[code] = v
+	}
+	rows.Close()
 	downtime, _ := s.ListDowntimeEvents(ctx, "", 100)
 	dtMin := 0.0
 	for _, d := range downtime {
@@ -212,65 +224,14 @@ func (s *Store) DailyProductionSummary(ctx context.Context, plantCode string, da
 		dtMin += endT.Sub(d.StartedAt).Minutes()
 	}
 	return map[string]any{
-		"plant":            plantCode,
-		"date":             start.Format("2006-01-02"),
-		"completed_runs":   runCount,
-		"output_kg":        kgOut,
-		"downtime_minutes": dtMin,
+		"plant":                   plantCode,
+		"date":                    start.Format("2006-01-02"),
+		"completed_runs":          measures["PROD_RUNS_COMPLETED"],
+		"output_kg":               measures["PROD_PRODUCT_KG"],
+		"input_kg":                measures["PROD_KG_IN"],
+		"reject_kg":               measures["PROD_REJECT_KG"],
+		"production_downtime_min": measures["PROD_DOWN_MIN"],
+		"downtime_minutes":        dtMin,
+		"source":                  "iag-production via production.measures.rolled_up",
 	}, nil
-}
-
-func (s *Store) QualitySummaryFromRuns(ctx context.Context, since time.Time, limit int) (map[string]any, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT batch_business_id, process, kg_out, moisture, status, completed_at
-		FROM prod_production_runs
-		WHERE completed_at >= $1 AND status = 'completed'
-		ORDER BY completed_at DESC
-		LIMIT $2`, since, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var batches []map[string]any
-	var moistureSum float64
-	var moistureN int
-	for rows.Next() {
-		var batchID, process, status string
-		var kgOut, moisture *float64
-		var completedAt *time.Time
-		if err := rows.Scan(&batchID, &process, &kgOut, &moisture, &status, &completedAt); err != nil {
-			return nil, err
-		}
-		item := map[string]any{
-			"batch_business_id": batchID,
-			"process":           process,
-			"status":            status,
-		}
-		if kgOut != nil {
-			item["kg_out"] = *kgOut
-		}
-		if moisture != nil {
-			item["moisture"] = *moisture
-			moistureSum += *moisture
-			moistureN++
-		}
-		if completedAt != nil {
-			item["completed_at"] = completedAt
-		}
-		batches = append(batches, item)
-	}
-	avgMoisture := 0.0
-	if moistureN > 0 {
-		avgMoisture = moistureSum / float64(moistureN)
-	}
-	return map[string]any{
-		"since":          since,
-		"batch_count":    len(batches),
-		"avg_moisture":   avgMoisture,
-		"recent_batches": batches,
-		"note":           fmt.Sprintf("Full SPC and cup scores live in quality-control; %d recent production runs shown", len(batches)),
-	}, rows.Err()
 }

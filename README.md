@@ -16,6 +16,7 @@ Plant maintenance, assets, telemetry, KPIs, and alerts. **Manufacturing executio
 - **CMMS:** work orders, PM schedules, downtime events, asset registry
 - **Performance:** KPI snapshots, alerts, energy, AI recommendations
 - **Integrations:** telemetry ingest; consumes cross-domain Kafka events
+- **Shop-floor KPIs (read model):** `production.measures.rolled_up` from iag-production is projected into `mes_kpi_snapshots` (`source='production'`, plant/asset/shift scopes) and `production.kpi.breached` becomes an MES alert. `mes_assets.oee_pct` is written from production's OEE, not by hand. `/shift-analysis` and `/reports/daily-production` read this projection.
 
 Production runs, orders, ERP sync, and traceability mill events → **`iag-production`**.
 
