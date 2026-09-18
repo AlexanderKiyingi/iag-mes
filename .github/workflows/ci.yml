@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: iag
+          POSTGRES_PASSWORD: iag_dev
+          POSTGRES_DB: iag_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U iag -d iag_platform"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create service schema
+        env:
+          PGPASSWORD: iag_dev
+        run: psql -h localhost -U iag -d iag_platform -c 'CREATE SCHEMA IF NOT EXISTS mes;'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      # go.mod points platform-go at the meta-repo's shared checkout; a
+      # standalone clone has the vendored snapshot instead, as in
+      # iag-production.
+      - name: Point platform-go at vendored snapshot
+        run: go mod edit -replace=github.com/alvor-technologies/iag-platform-go=$(pwd)/third_party/platform-go
+
+      - name: go mod tidy
+        run: go mod tidy
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+        env:
+          DATABASE_URL: postgres://iag:iag_dev@localhost:5432/iag_platform?sslmode=disable&search_path=mes
+          # Database-backed tests gate on this (none exist yet; the
+          # variable is set so the first one written runs here rather
+          # than skipping silently — see iag-production's CI for why).
+          TEST_DATABASE_URL: postgres://iag:iag_dev@localhost:5432/iag_platform?sslmode=disable&search_path=mes
+
+      # Migrations must apply cleanly to an empty schema, including the
+      # guarded DROPs in 010/011, on every change.
+      - name: Apply migrations to an empty schema
+        run: go run ./cmd/migrate
+        env:
+          DATABASE_URL: postgres://iag:iag_dev@localhost:5432/iag_platform?sslmode=disable&search_path=mes

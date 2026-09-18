@@ -16,6 +16,7 @@ Plant maintenance, assets, telemetry, KPIs, and alerts. **Manufacturing executio
 - **CMMS:** work orders, PM schedules, downtime events, asset registry
 - **Performance:** KPI snapshots, alerts, energy, AI recommendations
 - **Integrations:** telemetry ingest; consumes cross-domain Kafka events
+- **Shop-floor KPIs (read model):** `production.measures.rolled_up` from iag-production is projected into `mes_kpi_snapshots` (`source='production'`, plant/asset/shift scopes) and `production.kpi.breached` becomes an MES alert. `mes_assets.oee_pct` is written from production's OEE, not by hand. `/shift-analysis` and `/reports/daily-production` read this projection.
 
 Production runs, orders, ERP sync, and traceability mill events → **`iag-production`**.
 
@@ -34,7 +35,7 @@ Scheduled jobs (KPI rollup, telemetry alerts):
 ```bash
 go run ./cmd/mes-jobs -plant=kampala          # all jobs once
 go run ./cmd/mes-jobs -alerts                 # single job
-go run ./cmd/mes-jobs -daemon                 # local scheduler (15m alerts, 1h kpi/erp, 24h ai/energy)
+go run ./cmd/mes-jobs -daemon                 # local scheduler (15m alerts, 1h kpi, 24h ai/energy)
 ```
 
 Docker Compose (requires stack up):
@@ -49,7 +50,6 @@ pwsh deploy/scripts/run-mes-jobs.ps1 all
 |-----|----------|----------------|
 | Telemetry alerts | `-alerts` | `*/15 * * * *` |
 | KPI rollup | `-kpi` | `0 * * * *` |
-| ERP sync | `-erp-sync` | `0 * * * *` |
 | AI recommendations | `-ai` | `0 6 * * *` |
 | Energy insights | `-energy` | `0 6 * * *` |
 | Preventive maintenance sync | `-preventive-maintenance` | `0 * * * *` |
@@ -94,14 +94,12 @@ Requires `mes.admin.read` (GET) or `mes.admin.write` (POST). Gateway prefix: `/a
 | GET | `/monitoring/activity` | `mes.admin.read` | Recent API activity |
 | GET | `/config` | `mes.admin.read` | Runtime config (non-secret) |
 | GET | `/integrations/calls` | `mes.admin.read` | Outbound integration call log |
-| POST | `/integrations/erp/sync` | `mes.admin.write` | Pull ERP production orders |
-| POST | `/integrations/erp/webhook` | `mes.admin.write` | Ingest ERP webhook payload |
 | POST | `/integrations/warehouse/consume` | `mes.admin.write` | Manual warehouse consume |
 | POST | `/integrations/warehouse/output` | `mes.admin.write` | Manual warehouse output |
 | POST | `/integrations/qc/sample` | `mes.admin.write` | Manual QC sample submit |
 | POST | `/jobs/:job` | `mes.admin.write` | Run background job inline |
 
-Job names: `erp-sync`, `ai-recommendations`, `energy-insights`, `kpi-rollup`, `telemetry-alerts`, `preventive-maintenance-sync`. Optional `?plant=` for plant-scoped jobs.
+Job names: `ai-recommendations`, `energy-insights`, `kpi-rollup`, `telemetry-alerts`, `preventive-maintenance-sync`. Optional `?plant=` for plant-scoped jobs.
 
 Operators still use `GET /integrations/status` (requires `mes.view_overview`).
 
@@ -112,7 +110,6 @@ Operators still use `GET /integrations/status` (requires `mes.view_overview`).
 | Warehouse | `UPSTREAM_WAREHOUSE` | `POST /integrations/warehouse/consume`, `/output`; auto on run complete |
 | Quality control | `UPSTREAM_QUALITY_CONTROL` | `POST /integrations/qc/sample`; auto on run complete |
 | Supply chain | `UPSTREAM_SUPPLY_CHAIN` | Batch validation; Kafka consumer |
-| ERP | `UPSTREAM_ERP` or webhook | `POST /admin/integrations/erp/sync`, `/admin/integrations/erp/webhook` |
 
 Kafka consumer topics: `iag.supply-chain`, `iag.quality`, `iag.operations`.
 
@@ -120,7 +117,7 @@ Kafka consumer topics: `iag.supply-chain`, `iag.quality`, `iag.operations`.
 
 - `GET /ai/recommendations` — predictive maintenance, energy, performance
 - `GET /energy/summary` — kWh by tariff band
-- `cmd/mes-jobs` flags: `-ai`, `-energy`, `-erp-sync`
+- `cmd/mes-jobs` flags: `-ai`, `-energy`
 
 Frontend guide: [docs/FRONTEND_INTEGRATION.md](docs/FRONTEND_INTEGRATION.md)
 
@@ -135,6 +132,6 @@ Gateway edge RBAC: `mesViewPermissions` / `mesMutatePermissions` in `shared/serv
 | `001_api_audit.sql` | API audit log |
 | `002_schema.sql` | Full CMMS+MES schema |
 | `003_seed.sql` | Reference plants/assets from UI prototype |
-| `004_integrations_telemetry.sql` | Telemetry history, integration audit, energy, ERP queue |
+| `004_integrations_telemetry.sql` | Telemetry history, integration audit, energy, ERP queue (queue retired in 011) |
 
 Registry: [`subrepos.json`](../../../subrepos.json)

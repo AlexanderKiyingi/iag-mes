@@ -90,88 +90,13 @@ func (s *Store) RecordWarehouseHandoff(ctx context.Context, batchID, operation s
 	return err
 }
 
-func (s *Store) RecordQCHandoff(ctx context.Context, batchID, sampleID string, runID uuid.UUID) error {
+func (s *Store) RecordQCHandoff(ctx context.Context, batchID, sampleID string) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO mes_qc_handoffs (batch_business_id, sample_id, run_id, status)
-		VALUES ($1,$2,$3,'submitted')
+		INSERT INTO mes_qc_handoffs (batch_business_id, sample_id, status)
+		VALUES ($1,$2,'submitted')
 		ON CONFLICT (batch_business_id, sample_id) DO NOTHING`,
-		batchID, sampleID, runID)
+		batchID, sampleID)
 	return err
-}
-
-func (s *Store) EnqueueERPSync(ctx context.Context, poNum string, payload json.RawMessage) error {
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO mes_erp_sync_queue (po_num, payload, status)
-		VALUES ($1,$2::jsonb,'pending')
-		ON CONFLICT (po_num) DO UPDATE SET payload=EXCLUDED.payload, status='pending', error=NULL`,
-		poNum, payload)
-	return err
-}
-
-func (s *Store) ApplyERPSyncQueue(ctx context.Context) (int, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, po_num, payload FROM mes_erp_sync_queue WHERE status='pending' ORDER BY created_at LIMIT 50`)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-	applied := 0
-	for rows.Next() {
-		var id uuid.UUID
-		var poNum string
-		var payload []byte
-		if err := rows.Scan(&id, &poNum, &payload); err != nil {
-			return applied, err
-		}
-		var body map[string]any
-		if err := json.Unmarshal(payload, &body); err != nil {
-			_, _ = s.pool.Exec(ctx, `UPDATE mes_erp_sync_queue SET status='failed', error=$2 WHERE id=$1`, id, err.Error())
-			continue
-		}
-		po := ProductionOrder{PONum: poNum}
-		if v, ok := body["customer"].(string); ok {
-			po.Customer = v
-		}
-		if v, ok := body["product"].(string); ok {
-			po.Product = v
-		}
-		if v, ok := body["qty_kg"].(float64); ok {
-			po.QtyKg = v
-		}
-		if v, ok := body["status"].(string); ok {
-			po.Status = v
-		}
-		if _, err := s.UpsertProductionOrder(ctx, po); err != nil {
-			_, _ = s.pool.Exec(ctx, `UPDATE mes_erp_sync_queue SET status='failed', error=$2 WHERE id=$1`, id, err.Error())
-			continue
-		}
-		_, _ = s.pool.Exec(ctx, `UPDATE mes_erp_sync_queue SET status='applied', applied_at=NOW() WHERE id=$1`, id)
-		applied++
-	}
-	return applied, nil
-}
-
-func (s *Store) UpsertProductionOrder(ctx context.Context, po ProductionOrder) (*ProductionOrder, error) {
-	var attrs []byte
-	if po.Attrs != nil {
-		attrs, _ = json.Marshal(po.Attrs)
-	}
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO mes_production_orders (po_num, customer, product, qty_kg, origin_lot, asset_tag, status, due_at, erp_ref, attrs)
-		VALUES ($1,$2,$3,$4,$5,$6,COALESCE(NULLIF($7,''),'queued'),$8,$9,COALESCE($10::jsonb,'{}'))
-		ON CONFLICT (po_num) DO UPDATE SET
-		  customer=EXCLUDED.customer, product=EXCLUDED.product, qty_kg=EXCLUDED.qty_kg,
-		  origin_lot=EXCLUDED.origin_lot, asset_tag=EXCLUDED.asset_tag, status=EXCLUDED.status,
-		  due_at=EXCLUDED.due_at, erp_ref=EXCLUDED.erp_ref, updated_at=NOW()
-		RETURNING id, po_num, customer, product, qty_kg, origin_lot, asset_tag, status, due_at, erp_ref, attrs, created_at, updated_at`,
-		po.PONum, po.Customer, po.Product, po.QtyKg, po.OriginLot, po.AssetTag, po.Status, po.DueAt, po.ERPRef, attrs).Scan(
-		&po.ID, &po.PONum, &po.Customer, &po.Product, &po.QtyKg, &po.OriginLot, &po.AssetTag,
-		&po.Status, &po.DueAt, &po.ERPRef, &attrs, &po.CreatedAt, &po.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	po.Attrs = scanAttrs(attrs)
-	return &po, nil
 }
 
 type EnergyReading struct {

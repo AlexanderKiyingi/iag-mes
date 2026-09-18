@@ -108,9 +108,24 @@ func (c *Consumer) handleMessage(ctx context.Context, topic string, raw []byte) 
 		if t == "qc.lab.result_recorded" || t == "qc.coa.issued" {
 			return c.store.UpsertBatchRef(ctx, batchID, "kafka:"+env.Type)
 		}
-	case strings.Contains(topic, "operations") || strings.HasPrefix(t, "warehouse."):
-		if t == "warehouse.production.output" && batchID != "" {
-			return c.store.UpsertBatchRef(ctx, batchID, "kafka:warehouse.output")
+	case strings.Contains(topic, "operations") || strings.HasPrefix(t, "warehouse.") || strings.HasPrefix(t, "production."):
+		switch t {
+		case "warehouse.production.output":
+			if batchID != "" {
+				return c.store.UpsertBatchRef(ctx, batchID, "kafka:warehouse.output")
+			}
+		// Production's shop-floor KPIs (010): projected into
+		// mes_kpi_snapshots, and a crit breach becomes an MES alert.
+		case "production.measures.rolled_up":
+			ev, err := store.ParseRolledUp(env.Data)
+			if err != nil {
+				log.Printf("mes consumer: undecodable rolled_up event: %v", err)
+				return nil
+			}
+			_, err = c.store.ApplyProductionRollup(ctx, ev)
+			return err
+		case "production.kpi.breached":
+			return c.store.RaiseProductionBreach(ctx, env.Data)
 		}
 	}
 	return nil

@@ -130,36 +130,7 @@ func (a *API) IntegrationStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
-func (a *API) SyncERP(c *gin.Context) {
-	if a.Bridge == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "integrations disabled"})
-		return
-	}
-	n, err := a.Bridge.SyncERPProductionOrders(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"applied": n})
-}
 
-func (a *API) ERPWebhook(c *gin.Context) {
-	var body map[string]any
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if a.Bridge == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "integrations disabled"})
-		return
-	}
-	if err := a.Bridge.IngestERPWebhook(c.Request.Context(), body); err != nil {
-		writeStoreError(c, err)
-		return
-	}
-	n, _ := a.Store.ApplyERPSyncQueue(c.Request.Context())
-	c.JSON(http.StatusAccepted, gin.H{"status": "queued", "applied": n})
-}
 
 func (a *API) WarehouseConsume(c *gin.Context) {
 	if a.Bridge == nil || a.Bridge.Warehouse == nil || !a.Bridge.Warehouse.Enabled() {

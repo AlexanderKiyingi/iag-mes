@@ -132,18 +132,7 @@ func (a *API) ReportsLibrary(c *gin.Context) {
 			{"id": "reliability", "name": "Asset reliability (MTBF/MTTR)", "endpoint": "/api/v1/reliability/summary"},
 			{"id": "shift-analysis", "name": "Shift comparison", "endpoint": "/api/v1/shift-analysis"},
 			{"id": "kpi-summary", "name": "KPI rollup snapshot", "endpoint": "/api/v1/reports/summary"},
-			{"id": "quality-summary", "name": "Recent batch quality (MES read-model)", "endpoint": "/api/v1/quality/summary"},
 		},
 	})
 }
 
-func (a *API) QualitySummary(c *gin.Context) {
-	since := querySince(c, 30)
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
-	summary, err := a.Store.QualitySummaryFromRuns(c.Request.Context(), since, limit)
-	if err != nil {
-		writeStoreError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, summary)
-}
