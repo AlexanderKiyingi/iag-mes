@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iag-mes/backend/internal/events"
 	"time"
 
 	"github.com/google/uuid"
@@ -253,7 +254,35 @@ func (s *Store) CreateAsset(ctx context.Context, sectionID uuid.UUID, a Asset) (
 	if err != nil {
 		return nil, err
 	}
-	return s.GetAssetByTag(ctx, a.Tag)
+	created, err := s.GetAssetByTag(ctx, a.Tag)
+	if err != nil {
+		return nil, err
+	}
+	s.publishAsset(ctx, events.TypeAssetCreated, created)
+	return created, nil
+}
+
+// publishAsset tells production about a registry change. The payload is
+// what prod_machines needs: tag, name, category, status, plant, section,
+// capacity — see production's ProjectMESAsset.
+func (s *Store) publishAsset(ctx context.Context, eventType string, a *Asset) {
+	if s.bus == nil || a == nil {
+		return
+	}
+	data := map[string]any{
+		"tag":           a.Tag,
+		"name":          a.Name,
+		"category":      a.Category,
+		"status":        a.Status,
+		"plant_code":    a.PlantCode,
+		"section_code":  a.SectionCode,
+		"capacity_unit": a.CapacityUnit,
+		"timestamp":     time.Now().UTC().Format(time.RFC3339),
+	}
+	if a.Capacity != nil {
+		data["capacity"] = *a.Capacity
+	}
+	s.bus.Publish(ctx, eventType, data, a.Tag)
 }
 
 func (s *Store) PatchAsset(ctx context.Context, tag string, patch AssetPatch) (*Asset, error) {
@@ -300,7 +329,12 @@ func (s *Store) PatchAsset(ctx context.Context, tag string, patch AssetPatch) (*
 	if err != nil {
 		return nil, err
 	}
-	return s.GetAssetByTag(ctx, tag)
+	updated, err := s.GetAssetByTag(ctx, tag)
+	if err != nil {
+		return nil, err
+	}
+	s.publishAsset(ctx, events.TypeAssetUpdated, updated)
+	return updated, nil
 }
 
 type AssetPatch struct {
