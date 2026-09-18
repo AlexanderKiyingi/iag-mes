@@ -108,7 +108,6 @@ func main() {
 		bridge = &integrations.Bridge{
 			Warehouse: clients.NewWarehouse(cfg.UpstreamWarehouse, cfg.AuthTokenURL, cfg.ServiceClientID, cfg.ServiceClientSecret),
 			QC:        clients.NewQualityControl(cfg.UpstreamQC, cfg.AuthTokenURL, cfg.ServiceClientID, cfg.ServiceClientSecret),
-			ERP:       clients.NewERP(cfg.UpstreamERP, cfg.AuthTokenURL, cfg.ServiceClientID, cfg.ServiceClientSecret),
 			SCM:       clients.NewSCM(cfg.UpstreamSCM, cfg.AuthTokenURL, cfg.ServiceClientID, cfg.ServiceClientSecret),
 			Store:     st,
 			Cfg: integrations.Config{

@@ -43,7 +43,6 @@ func (a *API) AdminConfig(c *gin.Context) {
 	upstreams := map[string]bool{
 		"warehouse": a.Cfg.UpstreamWarehouse != "",
 		"qc":        a.Cfg.UpstreamQC != "",
-		"erp":       a.Cfg.UpstreamERP != "",
 		"scm":       a.Cfg.UpstreamSCM != "",
 	}
 	if a.Bridge != nil {

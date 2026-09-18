@@ -7,25 +7,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// Scheduling moved to iag-production with the runs (008–011 there). MES
-// keeps the ERP-synced production order list its planners read, the
-// technician roster and the shift timetable per plant.
-
-type ProductionOrder struct {
-	ID        uuid.UUID      `json:"id"`
-	PONum     string         `json:"po_num"`
-	Customer  string         `json:"customer"`
-	Product   string         `json:"product"`
-	QtyKg     float64        `json:"qty_kg"`
-	OriginLot *string        `json:"origin_lot,omitempty"`
-	AssetTag  *string        `json:"asset_tag,omitempty"`
-	Status    string         `json:"status"`
-	DueAt     *time.Time     `json:"due_at,omitempty"`
-	ERPRef    *string        `json:"erp_ref,omitempty"`
-	Attrs     map[string]any `json:"attrs"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-}
+// Scheduling and production orders moved to iag-production with the runs
+// (008–011 there). MES keeps the technician roster and the shift timetable
+// per plant.
 
 type Technician struct {
 	ID        uuid.UUID      `json:"id"`
@@ -36,34 +20,6 @@ type Technician struct {
 	Active    bool           `json:"active"`
 	Attrs     map[string]any `json:"attrs"`
 	CreatedAt time.Time      `json:"created_at"`
-}
-
-func (s *Store) ListProductionOrders(ctx context.Context, status string) ([]ProductionOrder, error) {
-	q := `SELECT id, po_num, customer, product, qty_kg, origin_lot, asset_tag, status, due_at, erp_ref, attrs, created_at, updated_at
-	      FROM mes_production_orders WHERE 1=1`
-	args := []any{}
-	if status != "" {
-		q += ` AND status = $1`
-		args = append(args, status)
-	}
-	q += ` ORDER BY due_at NULLS LAST, created_at DESC LIMIT 100`
-	rows, err := s.pool.Query(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []ProductionOrder
-	for rows.Next() {
-		var po ProductionOrder
-		var attrs []byte
-		if err := rows.Scan(&po.ID, &po.PONum, &po.Customer, &po.Product, &po.QtyKg, &po.OriginLot,
-			&po.AssetTag, &po.Status, &po.DueAt, &po.ERPRef, &attrs, &po.CreatedAt, &po.UpdatedAt); err != nil {
-			return nil, err
-		}
-		po.Attrs = scanAttrs(attrs)
-		out = append(out, po)
-	}
-	return out, rows.Err()
 }
 
 func (s *Store) ListTechnicians(ctx context.Context) ([]Technician, error) {

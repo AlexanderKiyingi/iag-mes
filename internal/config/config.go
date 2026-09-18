@@ -41,7 +41,6 @@ type Config struct {
 
 	UpstreamWarehouse string
 	UpstreamQC        string
-	UpstreamERP       string
 	UpstreamSCM       string
 
 	IntegrationsEnabled         bool
@@ -88,7 +87,6 @@ func Load() (*Config, error) {
 
 		UpstreamWarehouse: strings.TrimSpace(os.Getenv("UPSTREAM_WAREHOUSE")),
 		UpstreamQC:        strings.TrimSpace(os.Getenv("UPSTREAM_QUALITY_CONTROL")),
-		UpstreamERP:       strings.TrimSpace(os.Getenv("UPSTREAM_ERP")),
 		UpstreamSCM:       strings.TrimSpace(os.Getenv("UPSTREAM_SUPPLY_CHAIN")),
 
 		IntegrationsEnabled:        strings.EqualFold(getenv("INTEGRATIONS_ENABLED", "true"), "true"),

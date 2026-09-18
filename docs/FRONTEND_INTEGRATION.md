@@ -16,7 +16,6 @@ All requests require `Authorization: Bearer <JWT>` except `/health` and `/ready`
 | Production runs | `GET /production-runs`, `POST /production-runs`, `POST .../:id/advance`, `POST .../:id/complete` |
 | Production schedule | `GET /production-orders/schedule`, `GET /schedule-blocks` |
 | Shifts | `GET /shift-logs`, `POST /shift-logs`, `GET /operators` |
-| ERP sync | `POST /admin/integrations/erp/sync` (`production.admin.write`) |
 
 Production run complete (warehouse + QC):
 

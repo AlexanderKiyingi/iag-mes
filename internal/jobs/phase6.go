@@ -5,16 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"iag-mes/backend/internal/integrations"
 	"iag-mes/backend/internal/store"
 )
-
-func SyncERP(ctx context.Context, bridge *integrations.Bridge) (int, error) {
-	if bridge == nil {
-		return 0, nil
-	}
-	return bridge.SyncERPProductionOrders(ctx)
-}
 
 func GenerateAIRecommendations(ctx context.Context, st *store.Store) (int, error) {
 	assets, err := st.ListAssets(ctx, store.AssetFilter{})
