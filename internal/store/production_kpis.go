@@ -135,8 +135,10 @@ func (s *Store) ApplyProductionRollup(ctx context.Context, ev *RolledUpEvent) (i
 		}
 		key := sn.ScopeKey
 		if sn.ScopeType == "shift" && sn.ShiftName != "" {
-			// MES has no shift ids; the name is what its screens show.
-			key = sn.ShiftName
+			// MES has no shift ids; the name is what its screens show. The
+			// plant is part of the key because the upsert key has no plant
+			// column and every plant has a "Day" shift.
+			key = ev.PlantCode + "/" + sn.ShiftName
 		}
 		if err := upsert(code, sn.ScopeType, key, ev.PlantCode, sn.PeriodStart, sn.PeriodEnd, sn.Value, sn.Target, sn.Status); err != nil {
 			return n, err

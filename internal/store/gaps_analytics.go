@@ -165,7 +165,7 @@ func (s *Store) SixBigLosses(ctx context.Context, since time.Time) ([]SixBigLoss
 // mes_shift_logs, a table no handler ever wrote.
 func (s *Store) ShiftAnalysis(ctx context.Context, plantCode string, since time.Time) ([]ShiftMetricRow, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT scope_key, COUNT(*)::int, COALESCE(AVG(value), 0)::float8
+		SELECT substring(scope_key FROM length($1) + 2), COUNT(*)::int, COALESCE(AVG(value), 0)::float8
 		FROM mes_kpi_snapshots
 		WHERE source = 'production' AND scope_type = 'shift' AND kpi_code = 'SHIFT_OUTPUT_KG'
 		  AND plant_code = $1 AND recorded_at >= $2
@@ -196,8 +196,12 @@ func (s *Store) DailyProductionSummary(ctx context.Context, plantCode string, da
 	rows, err := s.pool.Query(ctx, `
 		SELECT kpi_code, value::float8 FROM mes_kpi_snapshots
 		WHERE source = 'production' AND scope_type = 'plant' AND plant_code = $1
-		  AND kpi_code LIKE 'PROD_%' AND recorded_at >= $2 - INTERVAL '12 hours' AND recorded_at < $3`,
-		plantCode, start, end)
+		  AND kpi_code LIKE 'PROD_%'
+		  -- period_start is the plant's local midnight expressed in UTC; a
+		  -- 24 h window centred on UTC midnight contains exactly one of them
+		  -- for any plant within ±12 h of UTC.
+		  AND recorded_at >= $2 - INTERVAL '12 hours' AND recorded_at < $2 + INTERVAL '12 hours'`,
+		plantCode, start)
 	if err != nil {
 		return nil, err
 	}

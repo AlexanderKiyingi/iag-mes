@@ -16,6 +16,13 @@ BEGIN
         IF to_regclass(t) IS NULL THEN
             CONTINUE;
         END IF;
+        -- 010 keeps mes_schedule_blocks when it holds rows, and that table
+        -- references mes_production_orders; dropping the parent would then
+        -- fail and, with AUTO_MIGRATE, stop the server on boot.
+        IF t = 'mes_production_orders' AND to_regclass('mes_schedule_blocks') IS NOT NULL THEN
+            RAISE NOTICE 'keeping mes_production_orders — mes_schedule_blocks still references it';
+            CONTINUE;
+        END IF;
         EXECUTE format('SELECT COUNT(*) FROM %I', t) INTO n;
         IF n = 0 THEN
             EXECUTE format('DROP TABLE %I', t);

@@ -103,9 +103,13 @@ func (s *Store) ListKPISnapshots(ctx context.Context, kpiCode string, limit int)
 }
 
 func (s *Store) RecordKPISnapshot(ctx context.Context, snap KPISnapshot) error {
+	// scope_type/scope_key (010) mirror the legacy plant/asset columns so
+	// MES-native and production-projected rows read the same way.
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO mes_kpi_snapshots (kpi_code, plant_code, asset_tag, value, recorded_at)
-		VALUES ($1,$2,$3,$4,COALESCE($5,NOW()))`,
+		INSERT INTO mes_kpi_snapshots (kpi_code, plant_code, asset_tag, value, recorded_at, scope_type, scope_key, source)
+		VALUES ($1,$2,$3,$4,COALESCE($5,NOW()),
+		        CASE WHEN COALESCE($3,'') <> '' THEN 'asset' ELSE 'plant' END,
+		        COALESCE(NULLIF($3,''), $2, ''), 'mes')`,
 		snap.KPICode, snap.PlantCode, snap.AssetTag, snap.Value, snap.RecordedAt)
 	return err
 }

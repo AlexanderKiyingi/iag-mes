@@ -15,6 +15,7 @@ import (
 	"iag-mes/backend/internal/auditlog"
 	"iag-mes/backend/internal/clients"
 	"iag-mes/backend/internal/config"
+	"iag-mes/backend/internal/consumer"
 	"iag-mes/backend/internal/db"
 	"iag-mes/backend/internal/events"
 	"iag-mes/backend/internal/handlers"
@@ -70,6 +71,33 @@ func main() {
 	})
 	bus.SetOutbox(outboxStore)
 	st.SetEventBus(bus)
+
+	// The consumer existed but was never started: nothing built it here, so
+	// MES has never consumed a Kafka event — not the batch registrations it
+	// handled since the split, and not production's KPI rollups (010). The
+	// server also produces events, so a plain production consumer that is
+	// down is a KPI screen that is empty, which is why the loop restarts.
+	if len(cfg.KafkaBrokers) > 0 {
+		kc := consumer.New(consumer.Config{
+			Brokers:          cfg.KafkaBrokers,
+			GroupID:          cfg.KafkaConsumerGroup,
+			SupplyChainTopic: cfg.KafkaSupplyChainTopic,
+			QualityTopic:     cfg.KafkaQualityTopic,
+			OperationsTopic:  cfg.KafkaOperationsTopic,
+		}, st)
+		go func() {
+			for {
+				if err := kc.Run(ctx); err != nil {
+					log.Printf("kafka consumer stopped: %v", err)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(10 * time.Second):
+				}
+			}
+		}()
+	}
 	defer bus.Close()
 
 	if bus.Enabled() {
