@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -41,6 +43,19 @@ func (a *API) Ready(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ready", "database": true, "event_bus_configured": a.Bus != nil && a.Bus.Enabled()})
 }
 
+// queryLimit reads a caller's page size, or zero to take the store's default.
+//
+// The list handlers passed a literal 50, so `?limit=` was accepted by the
+// router, ignored by the handler, and a caller asking for more got fifty rows
+// with nothing to say it had been capped. The store still clamps the result.
+func queryLimit(c *gin.Context) int {
+	n, err := strconv.Atoi(strings.TrimSpace(c.Query("limit")))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
 func writeStoreError(c *gin.Context, err error) {
 	if err == store.ErrNotFound {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
@@ -52,6 +67,17 @@ func writeStoreError(c *gin.Context, err error) {
 	}
 	if err == store.ErrBadInput {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid input"})
+		return
+	}
+	// A CHECK constraint refused a value. That is the caller's request being
+	// wrong, not this service failing. Handlers validate the sets they know
+	// about; this catches the rest, and keeps a client that retries 5xx from
+	// retrying a request that can never succeed.
+	if name, ok := store.IsCheckViolation(err); ok {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "a value in this request is outside the set its column allows",
+			"hint":  "constraint: " + name,
+		})
 		return
 	}
 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
