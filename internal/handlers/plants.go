@@ -95,6 +95,25 @@ func (a *API) CreateAsset(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// mes_assets CHECKs both columns. A client defaulting its machine form to
+	// "Active" — not a status this column has ever had — got a 500 and three
+	// retries of a request that could not succeed.
+	status, ok := store.Canonical(store.AssetStatuses, body.Status)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "status must be one of: " + store.Allowed(store.AssetStatuses),
+		})
+		return
+	}
+	body.Status = status
+	criticality, ok := store.Canonical(store.AssetCriticalities, body.Criticality)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "criticality must be one of: " + store.Allowed(store.AssetCriticalities),
+		})
+		return
+	}
+	body.Criticality = criticality
 	item, err := a.Store.CreateAsset(c.Request.Context(), body.SectionID, body.Asset)
 	if err != nil {
 		writeStoreError(c, err)
@@ -108,6 +127,16 @@ func (a *API) PatchAsset(c *gin.Context) {
 	if err := bindJSONCoerced(c, &patch); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if patch.Status != nil {
+		status, ok := store.Canonical(store.AssetStatuses, *patch.Status)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "status must be one of: " + store.Allowed(store.AssetStatuses),
+			})
+			return
+		}
+		patch.Status = &status
 	}
 	item, err := a.Store.PatchAsset(c.Request.Context(), c.Param("tag"), patch)
 	if err != nil {

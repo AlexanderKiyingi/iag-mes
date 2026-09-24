@@ -31,6 +31,19 @@ func (a *API) PatchWorkOrder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// Same closed set as create. A patch is the more likely place to meet a
+	// client's own status vocabulary, since that is where a screen moves a
+	// record through its lifecycle.
+	if patch.Status != nil {
+		status, ok := store.Canonical(store.WorkOrderStatuses, *patch.Status)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "status must be one of: " + store.Allowed(store.WorkOrderStatuses),
+			})
+			return
+		}
+		patch.Status = &status
+	}
 	item, err := a.Store.PatchWorkOrder(c.Request.Context(), c.Param("num"), patch)
 	if err != nil {
 		writeStoreError(c, err)
