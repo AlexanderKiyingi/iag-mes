@@ -195,18 +195,30 @@ func (s *Store) CreateDowntimeEvent(ctx context.Context, d DowntimeEvent) (*Down
 	if d.Attrs != nil {
 		attrs, _ = json.Marshal(d.Attrs)
 	}
+	// ended_at is accepted here so a stoppage can be recorded after it is over.
+	// Without it the only way to close an event was POST /:id/end, which stamps
+	// NOW() — so yesterday's 45-minute outage became an open event whose
+	// duration, once ended, was the time since someone typed it in. Every
+	// client computing minutes from these two columns was reading a number
+	// nobody could enter.
 	err = tx.QueryRow(ctx, `
-		INSERT INTO mes_downtime_events (asset_tag, category, reason, started_at, kg_lost, operator_ref, attrs)
-		VALUES ($1,$2,$3,COALESCE($4,NOW()),$5,NULLIF($6,''),COALESCE($7::jsonb,'{}'))
+		INSERT INTO mes_downtime_events (asset_tag, category, reason, started_at, ended_at, kg_lost, operator_ref, attrs)
+		VALUES ($1,$2,$3,COALESCE($4,NOW()),$5,$6,NULLIF($7,''),COALESCE($8::jsonb,'{}'))
 		RETURNING id, asset_tag, category, reason, started_at, ended_at, kg_lost, operator_ref, attrs, created_at`,
-		d.AssetTag, d.Category, d.Reason, d.StartedAt, d.KgLost, d.OperatorRef, attrs).Scan(
+		d.AssetTag, d.Category, d.Reason, d.StartedAt, d.EndedAt, d.KgLost, d.OperatorRef, attrs).Scan(
 		&d.ID, &d.AssetTag, &d.Category, &d.Reason, &d.StartedAt, &d.EndedAt,
 		&d.KgLost, &d.OperatorRef, &attrs, &d.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	d.Attrs = scanAttrs(attrs)
-	_, _ = tx.Exec(ctx, `UPDATE mes_assets SET status='down', updated_at=NOW() WHERE tag=$1`, d.AssetTag)
+	// Only an open event means the machine is down now. A historical one is
+	// being written up after the fact and says nothing about the present, so
+	// marking the asset down would strand it there — nothing clears it except
+	// ending an event that is already ended.
+	if d.EndedAt == nil {
+		_, _ = tx.Exec(ctx, `UPDATE mes_assets SET status='down', updated_at=NOW() WHERE tag=$1`, d.AssetTag)
+	}
 	if s.bus != nil {
 		data := map[string]any{
 			"asset_tag": d.AssetTag,

@@ -95,6 +95,12 @@ func (a *API) CreateDowntimeEvent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// A stoppage that ended before it started is a typo, and stored it would
+	// make every duration computed from these columns negative.
+	if body.EndedAt != nil && !body.StartedAt.IsZero() && body.EndedAt.Before(body.StartedAt) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ended_at is before started_at"})
+		return
+	}
 	item, err := a.Store.CreateDowntimeEvent(c.Request.Context(), body)
 	if err != nil {
 		writeStoreError(c, err)
