@@ -24,8 +24,12 @@ var (
 	// mes_work_orders.status — 002_schema.sql, widened by 005_cmms_gaps.sql.
 	WorkOrderStatuses = []string{"draft", "scheduled", "open", "in_progress", "completed", "cancelled"}
 
-	// mes_assets.status — 002_schema.sql.
-	AssetStatuses = []string{"running", "idle", "down", "pm", "maint"}
+	// mes_assets.status — 002_schema.sql, widened by 012.
+	//
+	// The first five say what a machine is doing; `retired` says it is no
+	// longer in service, which is why nothing derives utilisation from it and
+	// clients drop it from their pickers.
+	AssetStatuses = []string{"running", "idle", "down", "pm", "maint", "retired"}
 
 	// mes_work_orders.priority — 002_schema.sql.
 	WorkOrderPriorities = []string{"critical", "high", "medium", "low"}
