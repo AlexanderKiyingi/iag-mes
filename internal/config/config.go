@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/alvor-technologies/iag-platform-go/corsenv"
 	"github.com/alvor-technologies/iag-platform-go/runtimeenv"
@@ -43,10 +44,13 @@ type Config struct {
 	UpstreamQC        string
 	UpstreamSCM       string
 
-	IntegrationsEnabled         bool
-	AutoWarehouseOnRunComplete  bool
-	AutoQCOnRunComplete         bool
-	AutoValidateBatchWithSCM    bool
+	IntegrationsEnabled bool
+	// PMSyncInterval is how often the API server itself runs the
+	// preventive-maintenance sync. Zero turns the in-process loop off.
+	PMSyncInterval             time.Duration
+	AutoWarehouseOnRunComplete bool
+	AutoQCOnRunComplete        bool
+	AutoValidateBatchWithSCM   bool
 }
 
 func Load() (*Config, error) {
@@ -90,6 +94,7 @@ func Load() (*Config, error) {
 		UpstreamSCM:       strings.TrimSpace(os.Getenv("UPSTREAM_SUPPLY_CHAIN")),
 
 		IntegrationsEnabled:        strings.EqualFold(getenv("INTEGRATIONS_ENABLED", "true"), "true"),
+		PMSyncInterval:             pmSyncInterval(getenv("MES_PM_SYNC_INTERVAL", "1h")),
 		AutoWarehouseOnRunComplete: strings.EqualFold(getenv("AUTO_WAREHOUSE_ON_RUN_COMPLETE", "false"), "true"),
 		AutoQCOnRunComplete:        strings.EqualFold(getenv("AUTO_QC_ON_RUN_COMPLETE", "true"), "true"),
 		AutoValidateBatchWithSCM:   strings.EqualFold(getenv("AUTO_VALIDATE_BATCH_SCM", "false"), "true"),
@@ -167,4 +172,23 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// pmSyncInterval parses MES_PM_SYNC_INTERVAL. "0", "off" or "false" disable
+// the loop; anything unparseable falls back to the hourly default rather than
+// silently switching preventive maintenance off.
+func pmSyncInterval(raw string) time.Duration {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	switch v {
+	case "0", "off", "false", "disabled":
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return time.Hour
+	}
+	if d < time.Minute {
+		return time.Minute
+	}
+	return d
 }

@@ -20,6 +20,7 @@ import (
 	"iag-mes/backend/internal/events"
 	"iag-mes/backend/internal/handlers"
 	"iag-mes/backend/internal/integrations"
+	"iag-mes/backend/internal/jobs"
 	"iag-mes/backend/internal/middleware"
 	"iag-mes/backend/internal/migrate"
 	"iag-mes/backend/internal/outbox"
@@ -103,6 +104,17 @@ func main() {
 	if bus.Enabled() {
 		pub := outbox.NewPublisher(outboxStore, bus)
 		go pub.Run(ctx)
+	}
+
+	// Preventive maintenance has to run somewhere. It lived only in the
+	// mes-jobs daemon, which ships in this image but is not its entrypoint, so
+	// a deployment of the server alone never marked a schedule overdue or
+	// raised its work order. The job takes an advisory lock, so this loop, a
+	// separate mes-jobs and the admin route can all run without doubling up.
+	if cfg.PMSyncInterval > 0 {
+		go runPMSyncLoop(ctx, st, cfg.PMSyncInterval)
+	} else {
+		log.Printf("mes: MES_PM_SYNC_INTERVAL=0 — preventive maintenance sync disabled in the server")
 	}
 
 	var verifier *authclient.Verifier
@@ -247,6 +259,32 @@ func jwksRefreshLoop(ctx context.Context, v *authclient.Verifier) {
 			log.Printf("jwks still unavailable; all authenticated requests are being rejected: %v", err)
 		case !hadKeys:
 			log.Printf("jwks recovered; token verification restored")
+		}
+	}
+}
+
+// runPMSyncLoop runs the preventive-maintenance sync once shortly after boot,
+// then every interval until ctx ends. The first run waits a minute so a crash
+// loop does not hammer the database with syncs.
+func runPMSyncLoop(ctx context.Context, st *store.Store, interval time.Duration) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(time.Minute):
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		created, overdue, err := jobs.SyncPreventiveMaintenance(ctx, st)
+		if err != nil {
+			log.Printf("mes: preventive maintenance sync: %v", err)
+		} else if created > 0 || overdue > 0 {
+			log.Printf("mes: preventive maintenance sync: %d work orders raised, %d schedules overdue", created, overdue)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
 }
