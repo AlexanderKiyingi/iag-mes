@@ -79,8 +79,13 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 
 		v1.GET("/pm-templates", appmw.RequirePermission("mes.view_work_order"), api.ListPMTemplates)
 		v1.POST("/pm-templates", appmw.RequirePermission("mes.add_work_order"), api.CreatePMTemplate)
+		v1.PATCH("/pm-templates/:id", appmw.RequirePermission("mes.change_work_order"), api.PatchPMTemplate)
 		v1.GET("/pm-schedules", appmw.RequirePermission("mes.view_work_order"), api.ListPMSchedules)
 		v1.POST("/pm-schedules", appmw.RequirePermission("mes.add_work_order"), api.CreatePMSchedule)
+		v1.PATCH("/pm-schedules/:id", appmw.RequirePermission("mes.change_work_order"), api.PatchPMSchedule)
+		// Who a work order can be assigned to. The handler and table existed;
+		// nothing routed to them, so every technician field was free text.
+		v1.GET("/technicians", appmw.RequirePermission("mes.view_work_order"), api.ListTechnicians)
 		v1.GET("/maintenance/calendar", appmw.RequirePermission("mes.view_work_order"), api.MaintenanceCalendar)
 
 		v1.GET("/kpis/definitions", appmw.RequirePermission("mes.view_kpi"), api.ListKPIDefinitions)
