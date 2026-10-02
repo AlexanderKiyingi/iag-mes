@@ -97,8 +97,25 @@ func TestWorkOrderStatusesMatchTheColumn(t *testing.T) {
 }
 
 func TestAssetStatusesMatchTheColumn(t *testing.T) {
+	// 012 drops and re-adds the constraint 002 created, so 012 is current —
+	// the same arrangement as work orders and 005.
 	assertSameSet(t, "AssetStatuses", AssetStatuses,
-		setForTable(t, "002_schema.sql", "mes_assets", "status"))
+		setFromMigration(t, "012_retire_an_asset.sql", "status"))
+}
+
+func TestAnAssetCanBeRetired(t *testing.T) {
+	// The point of 012. Before it, mes_assets had five words for what a machine
+	// is doing and none for "this machine is gone", and no DELETE either — so a
+	// decommissioned machine stayed in every picker for good.
+	if _, ok := Canonical(AssetStatuses, "retired"); !ok {
+		t.Fatal("an asset must be able to leave service")
+	}
+	// It is not an operating state: nothing should infer utilisation from it.
+	for _, operating := range []string{"running", "idle", "down", "pm", "maint"} {
+		if operating == "retired" {
+			t.Fatal("retired must not be one of the operating states")
+		}
+	}
 }
 
 func TestWorkOrderPrioritiesMatchTheColumn(t *testing.T) {
