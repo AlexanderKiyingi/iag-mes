@@ -126,6 +126,15 @@ func (c *Consumer) handleMessage(ctx context.Context, topic string, raw []byte) 
 			return err
 		case "production.kpi.breached":
 			return c.store.RaiseProductionBreach(ctx, env.Data)
+		// Production's shift list (production 014): MES serves shifts from it.
+		case "production.shifts.changed":
+			snap, err := store.ParseShiftSnapshot(env.Data)
+			if err != nil {
+				log.Printf("mes consumer: undecodable shifts event: %v", err)
+				return nil
+			}
+			_, err = c.store.ApplyProductionShifts(ctx, snap)
+			return err
 		}
 	}
 	return nil
