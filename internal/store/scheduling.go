@@ -42,29 +42,3 @@ func (s *Store) ListTechnicians(ctx context.Context) ([]Technician, error) {
 	}
 	return out, rows.Err()
 }
-
-func (s *Store) GetShiftDefinition(ctx context.Context, plantCode string) ([]map[string]any, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT sd.name, sd.start_time, sd.end_time
-		FROM mes_shift_definitions sd
-		JOIN mes_plants p ON p.id = sd.plant_id
-		WHERE p.code = $1 ORDER BY sd.start_time`, plantCode)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []map[string]any
-	for rows.Next() {
-		var name string
-		var start, end time.Time
-		if err := rows.Scan(&name, &start, &end); err != nil {
-			return nil, err
-		}
-		out = append(out, map[string]any{
-			"name":       name,
-			"start_time": start.Format("15:04"),
-			"end_time":   end.Format("15:04"),
-		})
-	}
-	return out, rows.Err()
-}
