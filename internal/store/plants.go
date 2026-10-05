@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iag-mes/backend/internal/events"
 	"time"
@@ -395,12 +396,27 @@ func (s *Store) PatchAsset(ctx context.Context, tag string, patch AssetPatch) (*
 	if patch.PlantID != nil {
 		cur.PlantID = patch.PlantID
 	}
+	if patch.SectionID != nil && *patch.SectionID != cur.SectionID {
+		var plantID uuid.UUID
+		err := s.pool.QueryRow(ctx, `SELECT plant_id FROM mes_sections WHERE id = $1`, *patch.SectionID).Scan(&plantID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%w: no shop floor with id %s", ErrBadInput, *patch.SectionID)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if patch.PlantID != nil && *patch.PlantID != plantID {
+			return nil, fmt.Errorf("%w: plant_id disagrees with the shop floor's factory; send section_id alone", ErrBadInput)
+		}
+		cur.SectionID = *patch.SectionID
+		cur.PlantID = &plantID
+	}
 	attrs, _ := json.Marshal(cur.Attrs)
 	_, err = s.pool.Exec(ctx, `
 		UPDATE mes_assets SET name=$2, status=$3, oee_pct=$4, mtbf_hours=$5, attrs=$6::jsonb,
-		    purchased_on=$7, location=$8, capacity=$9, capacity_unit=$10, plant_id=$11, updated_at=NOW()
+		    purchased_on=$7, location=$8, capacity=$9, capacity_unit=$10, plant_id=$11, section_id=$12, updated_at=NOW()
 		WHERE tag=$1`, tag, cur.Name, cur.Status, cur.OEEPct, cur.MTBFHours, attrs,
-		cur.PurchasedOn, cur.Location, cur.Capacity, cur.CapacityUnit, cur.PlantID)
+		cur.PurchasedOn, cur.Location, cur.Capacity, cur.CapacityUnit, cur.PlantID, cur.SectionID)
 	if err != nil {
 		return nil, err
 	}
@@ -423,6 +439,10 @@ type AssetPatch struct {
 	Capacity     *float64       `json:"capacity"`
 	CapacityUnit *string        `json:"capacity_unit"`
 	PlantID      *uuid.UUID     `json:"plant_id"`
+	// SectionID moves the machine to another shop floor. Its factory follows:
+	// reads derive plant_code through the section, and plant_id is the
+	// denormalised copy, so the two are written together here.
+	SectionID *uuid.UUID `json:"section_id"`
 }
 
 type assetScanner interface {
