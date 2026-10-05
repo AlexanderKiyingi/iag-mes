@@ -31,14 +31,14 @@ func TestPlatformStatus_integrations(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	api := &API{
 		Cfg: &config.Config{
-			ServiceName:            "mes",
-			Audience:               "iag.mes",
-			AuthMode:               "jwt",
-			IntegrationsEnabled:    true,
-			KafkaProductionTopic:   "iag.production",
-			KafkaOperationsTopic:   "iag.operations",
-			KafkaSupplyChainTopic:  "iag.supply-chain",
-			KafkaQualityTopic:      "iag.quality",
+			ServiceName:           "mes",
+			Audience:              "iag.mes",
+			AuthMode:              "jwt",
+			IntegrationsEnabled:   true,
+			KafkaProductionTopic:  "iag.production",
+			KafkaOperationsTopic:  "iag.operations",
+			KafkaSupplyChainTopic: "iag.supply-chain",
+			KafkaQualityTopic:     "iag.quality",
 		},
 		Bus: nil,
 	}

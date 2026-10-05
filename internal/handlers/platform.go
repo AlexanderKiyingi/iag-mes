@@ -43,20 +43,20 @@ func (a *API) PlatformStatus(c *gin.Context) {
 		upstreams = a.Bridge.Status()
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"service":    a.Cfg.ServiceName,
-		"audience":   a.Cfg.Audience,
-		"gateway":    a.Cfg.GatewayAPIPrefix,
+		"service":              a.Cfg.ServiceName,
+		"audience":             a.Cfg.Audience,
+		"gateway":              a.Cfg.GatewayAPIPrefix,
 		"event_bus_configured": a.Bus != nil && a.Bus.Enabled(),
-		"auth_mode":  a.Cfg.AuthMode,
+		"auth_mode":            a.Cfg.AuthMode,
 		"integrations": gin.H{
 			"enabled":   a.Cfg.IntegrationsEnabled,
 			"upstreams": upstreams,
 		},
 		"kafka": gin.H{
-			"production":  a.Cfg.KafkaProductionTopic,
-			"operations":  a.Cfg.KafkaOperationsTopic,
+			"production":   a.Cfg.KafkaProductionTopic,
+			"operations":   a.Cfg.KafkaOperationsTopic,
 			"supply_chain": a.Cfg.KafkaSupplyChainTopic,
-			"quality":     a.Cfg.KafkaQualityTopic,
+			"quality":      a.Cfg.KafkaQualityTopic,
 		},
 	})
 }

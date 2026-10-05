@@ -53,6 +53,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/plants", appmw.RequirePermission("mes.view_plant"), api.ListPlants)
 		v1.POST("/plants", appmw.RequirePermission("mes.change_plant"), api.CreatePlant)
 		v1.GET("/plants/:code", appmw.RequirePermission("mes.view_plant"), api.GetPlant)
+		// 014 — a factory had no edit path at all, so the three that already
+		// existed could never be given an address or a pin on a map.
+		v1.PATCH("/plants/:code", appmw.RequirePermission("mes.change_plant"), api.PatchPlant)
 		v1.GET("/sections", appmw.RequirePermission("mes.view_plant"), api.ListSections)
 		v1.POST("/plants/:code/sections", appmw.RequirePermission("mes.change_plant"), api.CreateSection)
 		v1.GET("/plants/:code/shifts", appmw.RequirePermission("mes.view_shift"), api.ListShiftDefinitions)
