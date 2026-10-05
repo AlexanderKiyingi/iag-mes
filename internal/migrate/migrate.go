@@ -2,12 +2,14 @@ package migrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"iag-mes/backend/internal/db"
@@ -23,6 +25,58 @@ CREATE TABLE IF NOT EXISTS %s.schema_migrations (
 	version TEXT PRIMARY KEY,
 	applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );`, db.Schema)
+}
+
+// Pending lists the embedded migrations the database has not recorded, oldest
+// first.
+//
+// Read-only: it takes no lock and creates nothing, so it is safe to call on a
+// boot that is about to refuse to serve. A database with no ledger at all is
+// reported as every migration pending, which is the truthful answer for an
+// empty database and the one that stops a binary serving against it.
+func Pending(ctx context.Context, pool *pgxpool.Pool) ([]string, error) {
+	entries, err := fs.ReadDir(migrations.FS, ".")
+	if err != nil {
+		return nil, fmt.Errorf("read migrations: %w", err)
+	}
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			files = append(files, strings.TrimSuffix(e.Name(), ".sql"))
+		}
+	}
+	sort.Strings(files)
+
+	applied := map[string]bool{}
+	rows, err := pool.Query(ctx,
+		fmt.Sprintf(`SELECT version FROM %s.schema_migrations`, db.Schema))
+	if err != nil {
+		// No ledger means nothing has ever been applied here.
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) && pg.Code == "42P01" {
+			return files, nil
+		}
+		return nil, fmt.Errorf("read ledger: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		applied[v] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var out []string
+	for _, f := range files {
+		if !applied[f] {
+			out = append(out, f)
+		}
+	}
+	return out, nil
 }
 
 func Up(ctx context.Context, pool *pgxpool.Pool) error {
