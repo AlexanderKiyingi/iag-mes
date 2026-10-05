@@ -29,17 +29,30 @@ type WorkOrder struct {
 }
 
 type DowntimeEvent struct {
-	ID          uuid.UUID      `json:"id"`
-	AssetTag    string         `json:"asset_tag"`
-	Category    string         `json:"category"`
-	Reason      string         `json:"reason"`
-	StartedAt   time.Time      `json:"started_at"`
-	EndedAt     *time.Time     `json:"ended_at,omitempty"`
-	KgLost      *float64       `json:"kg_lost,omitempty"`
-	OperatorRef *string        `json:"operator_ref,omitempty"`
-	Attrs       map[string]any `json:"attrs"`
-	CreatedAt   time.Time      `json:"created_at"`
+	ID       uuid.UUID `json:"id"`
+	AssetTag string    `json:"asset_tag"`
+	Category string    `json:"category"`
+	Reason   string    `json:"reason"`
+	// scheduled | open | closed | cancelled (013). A scheduled row is a stop
+	// agreed before it happens; it says nothing about the machine right now.
+	State        string         `json:"state"`
+	StartedAt    time.Time      `json:"started_at"`
+	EndedAt      *time.Time     `json:"ended_at,omitempty"`
+	PlannedStart *time.Time     `json:"planned_start,omitempty"`
+	PlannedEnd   *time.Time     `json:"planned_end,omitempty"`
+	KgLost       *float64       `json:"kg_lost,omitempty"`
+	OperatorRef  *string        `json:"operator_ref,omitempty"`
+	Attrs        map[string]any `json:"attrs"`
+	CreatedAt    time.Time      `json:"created_at"`
 }
+
+// DowntimeStates are the only values mes_downtime_events.state accepts (013).
+var DowntimeStates = []string{"scheduled", "open", "closed", "cancelled"}
+
+// Every downtime read selects these, in this order, so one scan helper serves
+// them all.
+const downtimeColumns = `id, asset_tag, category, reason, state, started_at, ended_at,
+	      planned_start, planned_end, kg_lost, operator_ref, attrs, created_at`
 
 type PMTemplate struct {
 	ID            uuid.UUID      `json:"id"`
@@ -153,16 +166,25 @@ func (s *Store) getWorkOrderTx(ctx context.Context, tx pgx.Tx, num string) (*Wor
 	return scanWorkOrderRow(row)
 }
 
-func (s *Store) ListDowntimeEvents(ctx context.Context, assetTag string, limit int) ([]DowntimeEvent, error) {
+func (s *Store) ListDowntimeEvents(ctx context.Context, assetTag, state string, limit int) ([]DowntimeEvent, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	q := `SELECT id, asset_tag, category, reason, started_at, ended_at, kg_lost, operator_ref, attrs, created_at
+	q := `SELECT ` + downtimeColumns + `
 	      FROM mes_downtime_events WHERE 1=1`
 	args := []any{}
 	if assetTag != "" {
-		q += ` AND asset_tag = $1`
 		args = append(args, assetTag)
+		q += fmt.Sprintf(` AND asset_tag = $%d`, len(args))
+	}
+	// A planned stop is not part of the live downtime log — it has not
+	// happened. Callers that want the planned board ask for it by state, which
+	// is what keeps every client written before 013 seeing what it saw before.
+	if state != "" {
+		args = append(args, state)
+		q += fmt.Sprintf(` AND state = $%d`, len(args))
+	} else {
+		q += ` AND state <> 'scheduled'`
 	}
 	q += fmt.Sprintf(` ORDER BY started_at DESC LIMIT %d`, limit)
 	rows, err := s.pool.Query(ctx, q, args...)
@@ -174,8 +196,8 @@ func (s *Store) ListDowntimeEvents(ctx context.Context, assetTag string, limit i
 	for rows.Next() {
 		var d DowntimeEvent
 		var attrs []byte
-		if err := rows.Scan(&d.ID, &d.AssetTag, &d.Category, &d.Reason, &d.StartedAt, &d.EndedAt,
-			&d.KgLost, &d.OperatorRef, &attrs, &d.CreatedAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.AssetTag, &d.Category, &d.Reason, &d.State, &d.StartedAt, &d.EndedAt,
+			&d.PlannedStart, &d.PlannedEnd, &d.KgLost, &d.OperatorRef, &attrs, &d.CreatedAt); err != nil {
 			return nil, err
 		}
 		d.Attrs = scanAttrs(attrs)
@@ -201,13 +223,36 @@ func (s *Store) CreateDowntimeEvent(ctx context.Context, d DowntimeEvent) (*Down
 	// duration, once ended, was the time since someone typed it in. Every
 	// client computing minutes from these two columns was reading a number
 	// nobody could enter.
+	// 013: a stop can now be written before it happens. 'scheduled' is the
+	// only state a caller may create besides the default — an event cannot be
+	// born closed or cancelled.
+	if d.State == "" {
+		d.State = "open"
+	}
+	if d.State != "open" && d.State != "scheduled" {
+		return nil, fmt.Errorf("%w: state must be open or scheduled on create", ErrBadInput)
+	}
+	// The planned window is the agreed one; started_at carries it until the
+	// stop actually begins, so the board and the log order on one column.
+	if d.State == "scheduled" {
+		if d.PlannedStart == nil {
+			return nil, fmt.Errorf("%w: a scheduled stop needs a planned start", ErrBadInput)
+		}
+		if d.PlannedEnd != nil && !d.PlannedEnd.After(*d.PlannedStart) {
+			return nil, fmt.Errorf("%w: the planned end must be after the planned start", ErrBadInput)
+		}
+		d.StartedAt = *d.PlannedStart
+		d.EndedAt = nil
+	}
 	err = tx.QueryRow(ctx, `
-		INSERT INTO mes_downtime_events (asset_tag, category, reason, started_at, ended_at, kg_lost, operator_ref, attrs)
-		VALUES ($1,$2,$3,COALESCE($4,NOW()),$5,$6,NULLIF($7,''),COALESCE($8::jsonb,'{}'))
-		RETURNING id, asset_tag, category, reason, started_at, ended_at, kg_lost, operator_ref, attrs, created_at`,
-		d.AssetTag, d.Category, d.Reason, d.StartedAt, d.EndedAt, d.KgLost, d.OperatorRef, attrs).Scan(
-		&d.ID, &d.AssetTag, &d.Category, &d.Reason, &d.StartedAt, &d.EndedAt,
-		&d.KgLost, &d.OperatorRef, &attrs, &d.CreatedAt)
+		INSERT INTO mes_downtime_events (asset_tag, category, reason, state, started_at, ended_at,
+		                                 planned_start, planned_end, kg_lost, operator_ref, attrs)
+		VALUES ($1,$2,$3,$4,COALESCE($5,NOW()),$6,$7,$8,$9,NULLIF($10,''),COALESCE($11::jsonb,'{}'))
+		RETURNING `+downtimeColumns,
+		d.AssetTag, d.Category, d.Reason, d.State, d.StartedAt, d.EndedAt,
+		d.PlannedStart, d.PlannedEnd, d.KgLost, d.OperatorRef, attrs).Scan(
+		&d.ID, &d.AssetTag, &d.Category, &d.Reason, &d.State, &d.StartedAt, &d.EndedAt,
+		&d.PlannedStart, &d.PlannedEnd, &d.KgLost, &d.OperatorRef, &attrs, &d.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -216,10 +261,12 @@ func (s *Store) CreateDowntimeEvent(ctx context.Context, d DowntimeEvent) (*Down
 	// being written up after the fact and says nothing about the present, so
 	// marking the asset down would strand it there — nothing clears it except
 	// ending an event that is already ended.
-	if d.EndedAt == nil {
+	// ...and a scheduled stop has not happened at all, so it must not take the
+	// machine down now, nor raise the alert that says one just stopped.
+	if d.EndedAt == nil && d.State == "open" {
 		_, _ = tx.Exec(ctx, `UPDATE mes_assets SET status='down', updated_at=NOW() WHERE tag=$1`, d.AssetTag)
 	}
-	if s.bus != nil {
+	if s.bus != nil && d.State == "open" {
 		data := map[string]any{
 			"asset_tag": d.AssetTag,
 			"category":  d.Category,
@@ -246,6 +293,88 @@ func (s *Store) CreateDowntimeEvent(ctx context.Context, d DowntimeEvent) (*Down
 	return &d, nil
 }
 
+// StartDowntimeEvent turns a planned stop into one that is happening: the
+// machine goes down now, the "downtime started" event fires now, and
+// started_at becomes the real start. planned_start keeps the agreed time, so
+// a stop that began late can still be seen to have begun late.
+func (s *Store) StartDowntimeEvent(ctx context.Context, id uuid.UUID) (*DowntimeEvent, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var d DowntimeEvent
+	var attrs []byte
+	err = tx.QueryRow(ctx, `
+		SELECT `+downtimeColumns+`
+		FROM mes_downtime_events WHERE id = $1 FOR UPDATE`, id).Scan(
+		&d.ID, &d.AssetTag, &d.Category, &d.Reason, &d.State, &d.StartedAt, &d.EndedAt,
+		&d.PlannedStart, &d.PlannedEnd, &d.KgLost, &d.OperatorRef, &attrs, &d.CreatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if d.State != "scheduled" {
+		return nil, fmt.Errorf("%w: only a scheduled stop can be started", ErrBadInput)
+	}
+
+	now := time.Now().UTC()
+	if _, err := tx.Exec(ctx,
+		`UPDATE mes_downtime_events SET state='open', started_at=$2 WHERE id=$1`, id, now); err != nil {
+		return nil, err
+	}
+	_, _ = tx.Exec(ctx, `UPDATE mes_assets SET status='down', updated_at=NOW() WHERE tag=$1`, d.AssetTag)
+	d.State, d.StartedAt = "open", now
+	d.Attrs = scanAttrs(attrs)
+
+	if s.bus != nil {
+		data := map[string]any{
+			"asset_tag": d.AssetTag,
+			"category":  d.Category,
+			"reason":    d.Reason,
+			"timestamp": now.Format(time.RFC3339),
+			"planned":   true,
+		}
+		if err := s.bus.PublishTx(ctx, tx, events.TypeDowntimeStarted, data, d.AssetTag); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// CancelDowntimeEvent drops a plan. Only a stop that has not begun can be
+// cancelled — one that is already running is ended, not un-happened.
+func (s *Store) CancelDowntimeEvent(ctx context.Context, id uuid.UUID) (*DowntimeEvent, error) {
+	var d DowntimeEvent
+	var attrs []byte
+	err := s.pool.QueryRow(ctx, `
+		UPDATE mes_downtime_events SET state='cancelled'
+		 WHERE id = $1 AND state = 'scheduled'
+		RETURNING `+downtimeColumns, id).Scan(
+		&d.ID, &d.AssetTag, &d.Category, &d.Reason, &d.State, &d.StartedAt, &d.EndedAt,
+		&d.PlannedStart, &d.PlannedEnd, &d.KgLost, &d.OperatorRef, &attrs, &d.CreatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			// Either there is no such row, or it is not scheduled any more.
+			var state string
+			if e := s.pool.QueryRow(ctx,
+				`SELECT state FROM mes_downtime_events WHERE id = $1`, id).Scan(&state); e != nil {
+				return nil, ErrNotFound
+			}
+			return nil, fmt.Errorf("%w: a %s stop cannot be cancelled", ErrBadInput, state)
+		}
+		return nil, err
+	}
+	d.Attrs = scanAttrs(attrs)
+	return &d, nil
+}
+
 func (s *Store) EndDowntimeEvent(ctx context.Context, id uuid.UUID) (*DowntimeEvent, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -256,10 +385,10 @@ func (s *Store) EndDowntimeEvent(ctx context.Context, id uuid.UUID) (*DowntimeEv
 	var d DowntimeEvent
 	var attrs []byte
 	err = tx.QueryRow(ctx, `
-		SELECT id, asset_tag, category, reason, started_at, ended_at, kg_lost, operator_ref, attrs, created_at
+		SELECT `+downtimeColumns+`
 		FROM mes_downtime_events WHERE id = $1 FOR UPDATE`, id).Scan(
-		&d.ID, &d.AssetTag, &d.Category, &d.Reason, &d.StartedAt, &d.EndedAt,
-		&d.KgLost, &d.OperatorRef, &attrs, &d.CreatedAt)
+		&d.ID, &d.AssetTag, &d.Category, &d.Reason, &d.State, &d.StartedAt, &d.EndedAt,
+		&d.PlannedStart, &d.PlannedEnd, &d.KgLost, &d.OperatorRef, &attrs, &d.CreatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, ErrNotFound
@@ -267,11 +396,18 @@ func (s *Store) EndDowntimeEvent(ctx context.Context, id uuid.UUID) (*DowntimeEv
 		return nil, err
 	}
 	now := time.Now().UTC()
-	_, err = tx.Exec(ctx, `UPDATE mes_downtime_events SET ended_at=$2 WHERE id=$1`, id, now)
+	if d.State == "scheduled" {
+		return nil, fmt.Errorf("%w: that stop has not started yet — start it first", ErrBadInput)
+	}
+	if d.State == "cancelled" {
+		return nil, fmt.Errorf("%w: that stop was cancelled", ErrBadInput)
+	}
+	_, err = tx.Exec(ctx, `UPDATE mes_downtime_events SET ended_at=$2, state='closed' WHERE id=$1`, id, now)
 	if err != nil {
 		return nil, err
 	}
 	d.EndedAt = &now
+	d.State = "closed"
 	d.Attrs = scanAttrs(attrs)
 	_, _ = tx.Exec(ctx, `UPDATE mes_assets SET status='idle', updated_at=NOW() WHERE tag=$1`, d.AssetTag)
 	if s.bus != nil {

@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -81,12 +83,52 @@ func (a *API) CompleteWorkOrder(c *gin.Context) {
 }
 
 func (a *API) ListDowntimeEvents(c *gin.Context) {
-	items, err := a.Store.ListDowntimeEvents(c.Request.Context(), c.Query("asset"), queryLimit(c))
+	// ?state=scheduled is the planned board. Left out, the list is the live
+	// downtime log and leaves planned stops out of it, which is what every
+	// caller written before 013 expects.
+	state := strings.ToLower(strings.TrimSpace(c.Query("state")))
+	if state != "" && !slices.Contains(store.DowntimeStates, state) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "state must be one of: " + strings.Join(store.DowntimeStates, ", "),
+		})
+		return
+	}
+	items, err := a.Store.ListDowntimeEvents(c.Request.Context(), c.Query("asset"), state, queryLimit(c))
 	if err != nil {
 		writeStoreError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// StartDowntimeEvent turns a planned stop into one that is happening now.
+func (a *API) StartDowntimeEvent(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad id"})
+		return
+	}
+	item, err := a.Store.StartDowntimeEvent(c.Request.Context(), id)
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
+// CancelDowntimeEvent drops a plan that will not now happen.
+func (a *API) CancelDowntimeEvent(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad id"})
+		return
+	}
+	item, err := a.Store.CancelDowntimeEvent(c.Request.Context(), id)
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, item)
 }
 
 func (a *API) CreateDowntimeEvent(c *gin.Context) {

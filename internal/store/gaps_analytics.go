@@ -215,7 +215,7 @@ func (s *Store) DailyProductionSummary(ctx context.Context, plantCode string, da
 		measures[code] = v
 	}
 	rows.Close()
-	downtime, _ := s.ListDowntimeEvents(ctx, "", 100)
+	downtime, _ := s.ListDowntimeEvents(ctx, "", "", 100)
 	dtMin := 0.0
 	for _, d := range downtime {
 		if d.StartedAt.Before(start) || !d.StartedAt.Before(end) {
