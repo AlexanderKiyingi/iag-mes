@@ -130,8 +130,6 @@ func (a *API) IntegrationStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
-
-
 func (a *API) WarehouseConsume(c *gin.Context) {
 	if a.Bridge == nil || a.Bridge.Warehouse == nil || !a.Bridge.Warehouse.Enabled() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "warehouse upstream not configured"})

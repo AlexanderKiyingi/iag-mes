@@ -18,6 +18,22 @@ func (a *API) ListPlants(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
+// PatchPlant corrects a factory: its location, its name, whether it is still
+// active. Every field is optional, so moving a pin does not blank an address.
+func (a *API) PatchPlant(c *gin.Context) {
+	var body store.PlantPatch
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	item, err := a.Store.UpdatePlant(c.Request.Context(), c.Param("code"), body)
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
 func (a *API) CreatePlant(c *gin.Context) {
 	var body store.Plant
 	if err := c.ShouldBindJSON(&body); err != nil {

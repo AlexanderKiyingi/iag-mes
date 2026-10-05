@@ -103,11 +103,11 @@ func (a *API) ReliabilitySummary(c *gin.Context) {
 	pareto, _ := a.Store.DowntimePareto(c.Request.Context(), since, 15)
 	losses, _ := a.Store.SixBigLosses(c.Request.Context(), since)
 	c.JSON(http.StatusOK, gin.H{
-		"plant":          plant,
-		"since":          since,
-		"assets":         items,
+		"plant":           plant,
+		"since":           since,
+		"assets":          items,
 		"downtime_pareto": pareto,
-		"six_big_losses": losses,
+		"six_big_losses":  losses,
 	})
 }
 
@@ -148,4 +148,3 @@ func (a *API) ReportsLibrary(c *gin.Context) {
 		},
 	})
 }
-

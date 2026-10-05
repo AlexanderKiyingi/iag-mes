@@ -15,14 +15,14 @@ func TestAdminConfig(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	api := &API{
 		Cfg: &config.Config{
-			ServiceName:                "mes",
-			Environment:                "development",
-			AuthMode:                   "jwt",
-			IntegrationsEnabled:        true,
-			AutoQCOnRunComplete:        true,
-			UpstreamWarehouse:          "http://warehouse:4005",
-			KafkaProductionTopic:       "iag.production",
-			KafkaConsumerGroup:         "iag.mes",
+			ServiceName:          "mes",
+			Environment:          "development",
+			AuthMode:             "jwt",
+			IntegrationsEnabled:  true,
+			AutoQCOnRunComplete:  true,
+			UpstreamWarehouse:    "http://warehouse:4005",
+			KafkaProductionTopic: "iag.production",
+			KafkaConsumerGroup:   "iag.mes",
 		},
 	}
 

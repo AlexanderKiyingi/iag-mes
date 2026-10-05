@@ -12,16 +12,29 @@ import (
 )
 
 type Plant struct {
-	ID        uuid.UUID      `json:"id"`
-	Code      string         `json:"code"`
-	Name      string         `json:"name"`
-	Region    string         `json:"region"`
-	Timezone  string         `json:"timezone"`
-	Status    string         `json:"status"`
+	ID       uuid.UUID `json:"id"`
+	Code     string    `json:"code"`
+	Name     string    `json:"name"`
+	Region   string    `json:"region"`
+	Timezone string    `json:"timezone"`
+	Status   string    `json:"status"`
+	// Where the factory is (014). gps_lat/gps_lng match the supply-chain
+	// service's convention so factories and the farms supplying them plot on
+	// one map.
+	Address   string         `json:"address"`
+	City      string         `json:"city"`
+	District  string         `json:"district"`
+	Country   string         `json:"country"`
+	GPSLat    *float64       `json:"gps_lat,omitempty"`
+	GPSLng    *float64       `json:"gps_lng,omitempty"`
 	Attrs     map[string]any `json:"attrs"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 }
+
+// plantColumns is every column a plant read returns, in scan order.
+const plantColumns = `id, code, name, region, timezone, status,
+	      address, city, district, country, gps_lat, gps_lng, attrs, created_at, updated_at`
 
 type Section struct {
 	ID        uuid.UUID      `json:"id"`
@@ -72,9 +85,62 @@ func scanAttrs(raw []byte) map[string]any {
 	return m
 }
 
+// UpdatePlant corrects a factory in place. Everything is optional: a nil
+// field is left as it is, so moving a pin on a map does not blank an address.
+//
+// There was no edit path at all before 014 — CreatePlant is a plain INSERT and
+// code is UNIQUE, so the three factories that already existed could never have
+// been given a location.
+type PlantPatch struct {
+	Name     *string  `json:"name"`
+	Region   *string  `json:"region"`
+	Timezone *string  `json:"timezone"`
+	Status   *string  `json:"status"`
+	Address  *string  `json:"address"`
+	City     *string  `json:"city"`
+	District *string  `json:"district"`
+	Country  *string  `json:"country"`
+	GPSLat   *float64 `json:"gps_lat"`
+	GPSLng   *float64 `json:"gps_lng"`
+}
+
+func (s *Store) UpdatePlant(ctx context.Context, code string, in PlantPatch) (*Plant, error) {
+	var p Plant
+	var attrs []byte
+	err := s.pool.QueryRow(ctx, `
+		UPDATE mes_plants SET
+		  name     = COALESCE($2, name),
+		  region   = COALESCE($3, region),
+		  timezone = COALESCE($4, timezone),
+		  status   = COALESCE($5, status),
+		  address  = COALESCE($6, address),
+		  city     = COALESCE($7, city),
+		  district = COALESCE($8, district),
+		  country  = COALESCE($9, country),
+		  -- The pair moves together or not at all; the CHECK refuses half of one.
+		  gps_lat  = COALESCE($10, gps_lat),
+		  gps_lng  = COALESCE($11, gps_lng),
+		  updated_at = NOW()
+		 WHERE code = $1
+		RETURNING `+plantColumns,
+		code, in.Name, in.Region, in.Timezone, in.Status,
+		in.Address, in.City, in.District, in.Country, in.GPSLat, in.GPSLng).Scan(
+		&p.ID, &p.Code, &p.Name, &p.Region, &p.Timezone, &p.Status,
+		&p.Address, &p.City, &p.District, &p.Country, &p.GPSLat, &p.GPSLng,
+		&attrs, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	p.Attrs = scanAttrs(attrs)
+	return &p, nil
+}
+
 func (s *Store) ListPlants(ctx context.Context) ([]Plant, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, code, name, region, timezone, status, attrs, created_at, updated_at
+		SELECT `+plantColumns+`
 		FROM mes_plants ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -84,7 +150,9 @@ func (s *Store) ListPlants(ctx context.Context) ([]Plant, error) {
 	for rows.Next() {
 		var p Plant
 		var attrs []byte
-		if err := rows.Scan(&p.ID, &p.Code, &p.Name, &p.Region, &p.Timezone, &p.Status, &attrs, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Code, &p.Name, &p.Region, &p.Timezone, &p.Status,
+			&p.Address, &p.City, &p.District, &p.Country, &p.GPSLat, &p.GPSLng,
+			&attrs, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		p.Attrs = scanAttrs(attrs)
@@ -97,9 +165,11 @@ func (s *Store) GetPlantByCode(ctx context.Context, code string) (*Plant, error)
 	var p Plant
 	var attrs []byte
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, code, name, region, timezone, status, attrs, created_at, updated_at
+		SELECT `+plantColumns+`
 		FROM mes_plants WHERE code = $1`, code).Scan(
-		&p.ID, &p.Code, &p.Name, &p.Region, &p.Timezone, &p.Status, &attrs, &p.CreatedAt, &p.UpdatedAt)
+		&p.ID, &p.Code, &p.Name, &p.Region, &p.Timezone, &p.Status,
+		&p.Address, &p.City, &p.District, &p.Country, &p.GPSLat, &p.GPSLng,
+		&attrs, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, ErrNotFound
@@ -116,11 +186,16 @@ func (s *Store) CreatePlant(ctx context.Context, p Plant) (*Plant, error) {
 		attrs, _ = json.Marshal(p.Attrs)
 	}
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO mes_plants (code, name, region, timezone, status, attrs)
-		VALUES ($1, $2, $3, $4, COALESCE(NULLIF($5,''), 'active'), COALESCE($6::jsonb, '{}'))
-		RETURNING id, code, name, region, timezone, status, attrs, created_at, updated_at`,
-		p.Code, p.Name, p.Region, p.Timezone, p.Status, attrs).Scan(
-		&p.ID, &p.Code, &p.Name, &p.Region, &p.Timezone, &p.Status, &attrs, &p.CreatedAt, &p.UpdatedAt)
+		INSERT INTO mes_plants (code, name, region, timezone, status,
+		                        address, city, district, country, gps_lat, gps_lng, attrs)
+		VALUES ($1, $2, $3, $4, COALESCE(NULLIF($5,''), 'active'),
+		        $6, $7, $8, COALESCE(NULLIF($9,''), 'UG'), $10, $11, COALESCE($12::jsonb, '{}'))
+		RETURNING `+plantColumns,
+		p.Code, p.Name, p.Region, p.Timezone, p.Status,
+		p.Address, p.City, p.District, p.Country, p.GPSLat, p.GPSLng, attrs).Scan(
+		&p.ID, &p.Code, &p.Name, &p.Region, &p.Timezone, &p.Status,
+		&p.Address, &p.City, &p.District, &p.Country, &p.GPSLat, &p.GPSLng,
+		&attrs, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
