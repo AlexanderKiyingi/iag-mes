@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -57,16 +58,26 @@ func queryLimit(c *gin.Context) int {
 }
 
 func writeStoreError(c *gin.Context, err error) {
-	if err == store.ErrNotFound {
+	// errors.Is, not ==: a sentinel wrapped with %w to say *why* the input was
+	// refused used to miss all three of these and fall through to the 500
+	// below. The persist layer retries a 5xx three times and then reports a
+	// generic failure, so a message naming the wrong field never reached
+	// anyone — the clearer the error, the more certainly it was lost.
+	if errors.Is(err, store.ErrNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
-	if err == store.ErrConflict {
+	if errors.Is(err, store.ErrConflict) {
 		c.JSON(http.StatusConflict, gin.H{"error": "conflict"})
 		return
 	}
-	if err == store.ErrBadInput {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid input"})
+	if errors.Is(err, store.ErrBadInput) {
+		// The wrapped text is the reason; a bare sentinel has none to give.
+		msg := "invalid input"
+		if err != store.ErrBadInput {
+			msg = strings.TrimPrefix(err.Error(), store.ErrBadInput.Error()+": ")
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 		return
 	}
 	// A CHECK constraint refused a value. That is the caller's request being

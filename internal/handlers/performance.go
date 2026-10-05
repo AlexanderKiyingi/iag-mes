@@ -75,7 +75,7 @@ func (a *API) ReportsSummary(c *gin.Context) {
 	ctx := c.Request.Context()
 	kpis, _ := a.Store.ListKPISnapshots(ctx, "", 30)
 	alerts, _ := a.Store.ListAlerts(ctx, "", 20)
-	downtime, _ := a.Store.ListDowntimeEvents(ctx, "", 20)
+	downtime, _ := a.Store.ListDowntimeEvents(ctx, "", "", 20)
 	c.JSON(http.StatusOK, gin.H{
 		"kpi_snapshots":   kpis,
 		"recent_alerts":   alerts,

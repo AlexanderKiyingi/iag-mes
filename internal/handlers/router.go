@@ -76,6 +76,11 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/downtime-events", appmw.RequirePermission("mes.view_downtime"), api.ListDowntimeEvents)
 		v1.POST("/downtime-events", appmw.RequirePermission("mes.add_downtime"), api.CreateDowntimeEvent)
 		v1.POST("/downtime-events/:id/end", appmw.RequirePermission("mes.add_downtime"), api.EndDowntimeEvent)
+		// 013 — a stop agreed before it happens: start it when it does, or
+		// cancel it if it will not. Same permission as logging one: whoever
+		// may record a stoppage may plan one.
+		v1.POST("/downtime-events/:id/start", appmw.RequirePermission("mes.add_downtime"), api.StartDowntimeEvent)
+		v1.POST("/downtime-events/:id/cancel", appmw.RequirePermission("mes.add_downtime"), api.CancelDowntimeEvent)
 
 		v1.GET("/pm-templates", appmw.RequirePermission("mes.view_work_order"), api.ListPMTemplates)
 		v1.POST("/pm-templates", appmw.RequirePermission("mes.add_work_order"), api.CreatePMTemplate)
