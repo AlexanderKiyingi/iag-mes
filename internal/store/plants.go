@@ -255,6 +255,61 @@ func (s *Store) CreateSection(ctx context.Context, plantCode string, sec Section
 	return &sec, nil
 }
 
+// SectionPatch corrects a shop floor in place. Every field is optional, so
+// renaming a floor does not reset the line type it was set up with.
+//
+// There was no edit path at all: CreateSection is a plain INSERT, so a floor
+// typed in wrongly — or one whose line changed — could only be left as it was.
+// The frontend reports this honestly rather than hiding it (the records route
+// sends `capabilities.update`, and the screen drops Edit when it is false), so
+// the gap showed as a Shop Floors register you could add to and never correct.
+//
+// `code` is not patchable: it is half the natural key, assets hang off the
+// section by id, and production projects the code onto prod_machines.section.
+// Renaming it would silently orphan those references, so a floor that needs a
+// different code is a new floor and a move of its machines.
+type SectionPatch struct {
+	Name     *string        `json:"name"`
+	LineType *string        `json:"line_type"`
+	Attrs    map[string]any `json:"attrs"`
+}
+
+// UpdateSection patches one shop floor of one factory.
+//
+// Scoped by plant as well as code because section codes are unique per plant
+// only (mes_sections UNIQUE (plant_id, code)) — "wet" at one factory and "wet"
+// at another are different floors, and a patch that matched on code alone
+// would edit whichever came first.
+func (s *Store) UpdateSection(ctx context.Context, plantCode, sectionCode string, in SectionPatch) (*Section, error) {
+	var attrs []byte
+	if in.Attrs != nil {
+		attrs, _ = json.Marshal(in.Attrs)
+	}
+	var sec Section
+	var stored []byte
+	err := s.pool.QueryRow(ctx, `
+		UPDATE mes_sections sec SET
+		  name      = COALESCE($3, sec.name),
+		  line_type = COALESCE($4, sec.line_type),
+		  attrs     = COALESCE($5::jsonb, sec.attrs),
+		  updated_at = NOW()
+		 FROM mes_plants p
+		 WHERE sec.plant_id = p.id AND p.code = $1 AND sec.code = $2
+		RETURNING sec.id, sec.plant_id, p.code, sec.code, sec.name, sec.line_type,
+		          sec.attrs, sec.created_at, sec.updated_at`,
+		plantCode, sectionCode, in.Name, in.LineType, attrs).Scan(
+		&sec.ID, &sec.PlantID, &sec.PlantCode, &sec.Code, &sec.Name, &sec.LineType,
+		&stored, &sec.CreatedAt, &sec.UpdatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	sec.Attrs = scanAttrs(stored)
+	return &sec, nil
+}
+
 func (s *Store) ListAssets(ctx context.Context, filter AssetFilter) ([]Asset, error) {
 	q := `
 		SELECT a.id, a.section_id, p.code, sec.code, a.tag, a.name, a.category, a.criticality, a.status,

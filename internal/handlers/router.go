@@ -58,6 +58,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.PATCH("/plants/:code", appmw.RequirePermission("mes.change_plant"), api.PatchPlant)
 		v1.GET("/sections", appmw.RequirePermission("mes.view_plant"), api.ListSections)
 		v1.POST("/plants/:code/sections", appmw.RequirePermission("mes.change_plant"), api.CreateSection)
+		v1.PATCH("/plants/:code/sections/:section", appmw.RequirePermission("mes.change_plant"), api.PatchSection)
 		v1.GET("/plants/:code/shifts", appmw.RequirePermission("mes.view_shift"), api.ListShiftDefinitions)
 
 		v1.GET("/assets", appmw.RequirePermission("mes.view_asset"), api.ListAssets)
