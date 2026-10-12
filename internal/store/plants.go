@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"iag-mes/backend/internal/events"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -102,9 +103,60 @@ type PlantPatch struct {
 	Country  *string  `json:"country"`
 	GPSLat   *float64 `json:"gps_lat"`
 	GPSLng   *float64 `json:"gps_lng"`
+	// LabourRates sets the hourly rate maintenance labour is costed at, per
+	// technician role ("*" is the rate for anyone whose role has none). Keys
+	// are merged into attrs.labour_rates: a role not named is left alone, and
+	// a null rate removes that role. Rates are configuration, not pay — the
+	// salary itself stays in HR.
+	LabourRates map[string]*float64 `json:"labour_rates"`
+	// LabourCurrency is the currency those rates are in (ISO 4217).
+	LabourCurrency *string `json:"labour_currency"`
+}
+
+// MaxLabourRate bounds an hourly rate. It is generous for UGX (the platform's
+// base currency) and exists to catch a monthly salary typed into an hourly box.
+const MaxLabourRate = 10_000_000
+
+// ValidateLabourRates refuses what the cost report could not use: a blank or
+// overlong role, a negative or absurd rate, or a currency that is not a code.
+func (in PlantPatch) ValidateLabourRates() error {
+	for role, rate := range in.LabourRates {
+		r := strings.TrimSpace(role)
+		if r == "" || len(r) > 80 {
+			return fmt.Errorf("%w: a labour rate needs a role of 1–80 characters (\"*\" for everyone else)", ErrBadInput)
+		}
+		if rate != nil && (*rate < 0 || *rate > MaxLabourRate) {
+			return fmt.Errorf("%w: the hourly rate for %q must be between 0 and %d", ErrBadInput, r, MaxLabourRate)
+		}
+	}
+	if in.LabourCurrency != nil {
+		c := strings.TrimSpace(*in.LabourCurrency)
+		if len(c) != 3 || strings.ToUpper(c) != c {
+			return fmt.Errorf("%w: labour_currency must be a three-letter code such as UGX", ErrBadInput)
+		}
+	}
+	return nil
 }
 
 func (s *Store) UpdatePlant(ctx context.Context, code string, in PlantPatch) (*Plant, error) {
+	if err := in.ValidateLabourRates(); err != nil {
+		return nil, err
+	}
+	// Merged into attrs in SQL rather than read-modify-write here: the
+	// production.shifts.changed consumer writes attrs.production_shifts on the
+	// same row, and a read-modify-write would race it.
+	var rates []byte
+	if len(in.LabourRates) > 0 {
+		clean := make(map[string]*float64, len(in.LabourRates))
+		for role, rate := range in.LabourRates {
+			clean[strings.TrimSpace(role)] = rate
+		}
+		rates, _ = json.Marshal(clean)
+	}
+	var currency []byte
+	if in.LabourCurrency != nil {
+		currency, _ = json.Marshal(map[string]string{"labour_currency": strings.TrimSpace(*in.LabourCurrency)})
+	}
 	var p Plant
 	var attrs []byte
 	err := s.pool.QueryRow(ctx, `
@@ -120,11 +172,15 @@ func (s *Store) UpdatePlant(ctx context.Context, code string, in PlantPatch) (*P
 		  -- The pair moves together or not at all; the CHECK refuses half of one.
 		  gps_lat  = COALESCE($10, gps_lat),
 		  gps_lng  = COALESCE($11, gps_lng),
+		  attrs = (CASE WHEN $12::jsonb IS NULL THEN COALESCE(attrs, '{}'::jsonb) ELSE jsonb_set(
+		            COALESCE(attrs, '{}'::jsonb), '{labour_rates}',
+		            jsonb_strip_nulls(COALESCE(attrs->'labour_rates', '{}'::jsonb) || $12::jsonb)) END)
+		          || COALESCE($13::jsonb, '{}'::jsonb),
 		  updated_at = NOW()
 		 WHERE code = $1
 		RETURNING `+plantColumns,
 		code, in.Name, in.Region, in.Timezone, in.Status,
-		in.Address, in.City, in.District, in.Country, in.GPSLat, in.GPSLng).Scan(
+		in.Address, in.City, in.District, in.Country, in.GPSLat, in.GPSLng, rates, currency).Scan(
 		&p.ID, &p.Code, &p.Name, &p.Region, &p.Timezone, &p.Status,
 		&p.Address, &p.City, &p.District, &p.Country, &p.GPSLat, &p.GPSLng,
 		&attrs, &p.CreatedAt, &p.UpdatedAt)
