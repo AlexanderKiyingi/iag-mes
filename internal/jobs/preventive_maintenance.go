@@ -63,6 +63,7 @@ func syncPreventiveMaintenance(ctx context.Context, st *store.Store) (created in
 				Message:    msg,
 				OccurredAt: now,
 			})
+			st.Notify(ctx, store.Notice{Audience: store.AudiencePMOverdue, Title: "PM overdue on " + sch.AssetTag, Message: msg, Key: sch.AssetTag})
 		}
 	}
 	// Running hours: a template with interval_hours is due by use as well as
@@ -93,6 +94,12 @@ func syncPreventiveMaintenance(ctx context.Context, st *store.Store) (created in
 					Source:     sch.AssetTag,
 					Message:    fmt.Sprintf("Preventive maintenance due by running hours for %s (%.0f of %.0f h)", sch.AssetTag, deref(m.UsedHours), m.IntervalHours),
 					OccurredAt: now,
+				})
+				st.Notify(ctx, store.Notice{
+					Audience: store.AudiencePMOverdue,
+					Title:    "PM due by running hours on " + sch.AssetTag,
+					Message:  fmt.Sprintf("%.0f of %.0f h run since the last service.", deref(m.UsedHours), m.IntervalHours),
+					Key:      sch.AssetTag,
 				})
 			}
 		}

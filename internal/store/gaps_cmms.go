@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,6 +39,10 @@ func (s *Store) PatchWorkOrder(ctx context.Context, num string, patch WorkOrderP
 		return nil, err
 	}
 	priorStatus := wo.Status
+	priorAssignee := ""
+	if wo.Assignee != nil {
+		priorAssignee = *wo.Assignee
+	}
 	if patch.Title != nil {
 		wo.Title = *patch.Title
 	}
@@ -94,6 +99,9 @@ func (s *Store) PatchWorkOrder(ctx context.Context, num string, patch WorkOrderP
 		return nil, err
 	}
 	wo.Attrs = scanAttrs(attrs)
+	if wo.Assignee != nil && *wo.Assignee != "" && !strings.EqualFold(*wo.Assignee, priorAssignee) {
+		s.NotifyAssigned(ctx, wo)
+	}
 	return wo, nil
 }
 
