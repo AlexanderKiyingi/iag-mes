@@ -93,6 +93,8 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/fault-reports", appmw.RequireAnyPermission("mes.report_fault", "mes.add_work_order", "mes.ack_alert"), api.CreateFaultReport)
 		v1.POST("/fault-reports/:id/convert", appmw.RequirePermission("mes.add_work_order"), api.ConvertFaultReport)
 		v1.POST("/fault-reports/:id/reject", appmw.RequirePermission("mes.ack_alert"), api.RejectFaultReport)
+		// Ask procurement to buy a spare part (iag-procurement imports it).
+		v1.POST("/purchase-requests", appmw.RequireAnyPermission("mes.change_work_order", "mes.add_work_order"), api.RequestPurchase)
 		// Running-hours meters, for PM due by use.
 		v1.POST("/assets/:tag/meter-readings", appmw.RequireAnyPermission("mes.change_asset", "mes.change_work_order"), api.RecordMeterReading)
 		v1.GET("/pm-schedules/meter-status", appmw.RequirePermission("mes.view_work_order"), api.ListMeterStatus)

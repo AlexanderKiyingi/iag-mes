@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -177,4 +178,20 @@ func (a *API) ListMeterStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// RequestPurchase asks procurement to buy a spare part (procurement.requested
+// on iag.operations). The answer is the ref to find the requisition by.
+func (a *API) RequestPurchase(c *gin.Context) {
+	var in store.PurchaseRequestInput
+	if err := bindJSONCoerced(c, &in); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	ref, err := a.Store.RequestPurchase(c.Request.Context(), in, appmw.ActorName(c), time.Now())
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"ref": ref, "origin_system": "maintenance", "status": "sent to procurement"})
 }

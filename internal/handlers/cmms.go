@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -79,6 +80,14 @@ func (a *API) CreateWorkOrder(c *gin.Context) {
 	if err != nil {
 		writeStoreError(c, err)
 		return
+	}
+	if appr, _ := item.Attrs["approval"].(map[string]any); appr != nil && appr["state"] == "pending" {
+		a.Store.Notify(c.Request.Context(), store.Notice{
+			Audience: store.AudienceApprovals,
+			Title:    item.Num + " needs approval",
+			Message:  fmt.Sprintf("%s on %s, estimated at %v (threshold %v). Raised by %s.", item.Title, item.AssetTag, appr["estimate"], appr["threshold"], actor),
+			Key:      item.AssetTag,
+		})
 	}
 	c.JSON(http.StatusCreated, item)
 }

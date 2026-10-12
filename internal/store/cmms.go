@@ -117,6 +117,7 @@ func (s *Store) CreateWorkOrder(ctx context.Context, wo WorkOrder) (*WorkOrder, 
 		return nil, err
 	}
 	wo.Attrs = scanAttrs(attrs)
+	s.NotifyAssigned(ctx, &wo)
 	return &wo, nil
 }
 

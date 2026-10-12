@@ -27,11 +27,16 @@ const (
 	TypeAssetUpdated = "mes.asset.updated"
 
 	TypeAlertRaised = "mes.alert.raised"
+
+	// TypeProcurementRequested asks iag-procurement to raise a requisition
+	// (its consumer on iag.operations; origin_system = sourceService).
+	TypeProcurementRequested = "procurement.requested"
 )
 
 func TopicForEvent(eventType string) string {
 	switch eventType {
-	case TypeDowntimeStarted, TypeDowntimeEnded, TypeWorkOrderDone, TypeAlertRaised, TypeAssetCreated, TypeAssetUpdated:
+	case TypeDowntimeStarted, TypeDowntimeEnded, TypeWorkOrderDone, TypeAlertRaised, TypeAssetCreated, TypeAssetUpdated,
+		TypeProcurementRequested:
 		return TopicOperations
 	default:
 		return TopicProduction

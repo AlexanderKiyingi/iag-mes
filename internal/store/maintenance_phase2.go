@@ -57,6 +57,12 @@ type FaultReportConvert struct {
 // has stopped it also opens a downtime event, so the stop is counted from the
 // moment it was reported, not from when maintenance got to it.
 func (s *Store) CreateFaultReport(ctx context.Context, in FaultReportInput, reportedBy string) (*Alert, error) {
+	return s.createFaultReport(ctx, in, reportedBy, nil)
+}
+
+// createFaultReport is CreateFaultReport with extra attrs, for reports a
+// sensor rule raises (rule_code, reading) rather than a person.
+func (s *Store) createFaultReport(ctx context.Context, in FaultReportInput, reportedBy string, extra map[string]any) (*Alert, error) {
 	tag := strings.TrimSpace(in.AssetTag)
 	title := strings.TrimSpace(in.Title)
 	if tag == "" {
@@ -92,6 +98,9 @@ func (s *Store) CreateFaultReport(ctx context.Context, in FaultReportInput, repo
 	if len(in.Attachments) > 0 {
 		attrs["attachments"] = in.Attachments
 	}
+	for k, v := range extra {
+		attrs[k] = v
+	}
 	alert, err := s.CreateAlert(ctx, Alert{
 		Severity: severity,
 		Source:   tag,
@@ -115,6 +124,20 @@ func (s *Store) CreateFaultReport(ctx context.Context, in FaultReportInput, repo
 		if err != nil {
 			return nil, err
 		}
+	}
+	notice := Notice{
+		Audience: AudienceFaultReports,
+		Title:    fmt.Sprintf("Fault reported on %s", tag),
+		Message:  fmt.Sprintf("%s — reported by %s.", title, reportedBy),
+		Critical: severity == "crit",
+		Key:      tag,
+	}
+	s.Notify(ctx, notice)
+	if in.MachineStopped {
+		notice.Audience = AudienceMachineStopped
+		notice.Title = fmt.Sprintf("%s has stopped", tag)
+		notice.Critical = true
+		s.Notify(ctx, notice)
 	}
 	return alert, nil
 }
