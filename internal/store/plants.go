@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"iag-mes/backend/internal/events"
 	"strings"
 	"time"
@@ -111,6 +112,10 @@ type PlantPatch struct {
 	LabourRates map[string]*float64 `json:"labour_rates"`
 	// LabourCurrency is the currency those rates are in (ISO 4217).
 	LabourCurrency *string `json:"labour_currency"`
+	// ApprovalThreshold is the estimated cost at or above which a new work
+	// order at this factory waits for approval before it can start. Zero
+	// turns approval off.
+	ApprovalThreshold *float64 `json:"approval_threshold"`
 }
 
 // MaxLabourRate bounds an hourly rate. It is generous for UGX (the platform's
@@ -135,6 +140,9 @@ func (in PlantPatch) ValidateLabourRates() error {
 			return fmt.Errorf("%w: labour_currency must be a three-letter code such as UGX", ErrBadInput)
 		}
 	}
+	if in.ApprovalThreshold != nil && (*in.ApprovalThreshold < 0 || math.IsNaN(*in.ApprovalThreshold)) {
+		return fmt.Errorf("%w: approval_threshold is zero (off) or more", ErrBadInput)
+	}
 	return nil
 }
 
@@ -153,9 +161,17 @@ func (s *Store) UpdatePlant(ctx context.Context, code string, in PlantPatch) (*P
 		}
 		rates, _ = json.Marshal(clean)
 	}
-	var currency []byte
+	// Top-level attrs keys this patch sets, merged in SQL like the rates.
+	top := map[string]any{}
 	if in.LabourCurrency != nil {
-		currency, _ = json.Marshal(map[string]string{"labour_currency": strings.TrimSpace(*in.LabourCurrency)})
+		top["labour_currency"] = strings.TrimSpace(*in.LabourCurrency)
+	}
+	if in.ApprovalThreshold != nil {
+		top["approval_threshold"] = *in.ApprovalThreshold
+	}
+	var currency []byte
+	if len(top) > 0 {
+		currency, _ = json.Marshal(top)
 	}
 	var p Plant
 	var attrs []byte

@@ -76,6 +76,26 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.PATCH("/work-orders/:num", appmw.RequirePermission("mes.change_work_order"), api.PatchWorkOrder)
 		v1.POST("/work-orders/:num/start", appmw.RequirePermission("mes.change_work_order"), api.StartWorkOrder)
 		v1.POST("/work-orders/:num/complete", appmw.RequirePermission("mes.complete_work_order"), api.CompleteWorkOrder)
+		// Maintenance phase 2: checklists run step by step, sign-off, failure
+		// codes and approval (internal/store/maintenance_phase2.go).
+		v1.POST("/work-orders/:num/checklist", appmw.RequirePermission("mes.change_work_order"), api.RecordChecklist)
+		v1.POST("/work-orders/:num/signoff/technician", appmw.RequirePermission("mes.change_work_order"), api.signoff("technician"))
+		// Approving work and checking finished work are supervisor acts:
+		// technicians hold complete_work_order, so it cannot stand in here.
+		v1.POST("/work-orders/:num/signoff/supervisor", appmw.RequirePermission("mes.approve_work_order"), api.signoff("supervisor"))
+		v1.POST("/work-orders/:num/failure", appmw.RequirePermission("mes.change_work_order"), api.SetFailure)
+		v1.POST("/work-orders/:num/approve", appmw.RequirePermission("mes.approve_work_order"), api.decideApproval(true))
+		v1.POST("/work-orders/:num/reject", appmw.RequirePermission("mes.approve_work_order"), api.decideApproval(false))
+		v1.GET("/failure-codes", appmw.RequirePermission("mes.view_work_order"), api.ListFailureCodes)
+		// Faults reported from the floor. Anyone who may raise work, or a
+		// production user given mes.report_fault, can report one.
+		v1.GET("/fault-reports", appmw.RequireAnyPermission("mes.view_alert", "mes.view_work_order", "mes.report_fault"), api.ListFaultReports)
+		v1.POST("/fault-reports", appmw.RequireAnyPermission("mes.report_fault", "mes.add_work_order", "mes.ack_alert"), api.CreateFaultReport)
+		v1.POST("/fault-reports/:id/convert", appmw.RequirePermission("mes.add_work_order"), api.ConvertFaultReport)
+		v1.POST("/fault-reports/:id/reject", appmw.RequirePermission("mes.ack_alert"), api.RejectFaultReport)
+		// Running-hours meters, for PM due by use.
+		v1.POST("/assets/:tag/meter-readings", appmw.RequireAnyPermission("mes.change_asset", "mes.change_work_order"), api.RecordMeterReading)
+		v1.GET("/pm-schedules/meter-status", appmw.RequirePermission("mes.view_work_order"), api.ListMeterStatus)
 
 		v1.GET("/downtime-events", appmw.RequirePermission("mes.view_downtime"), api.ListDowntimeEvents)
 		v1.POST("/downtime-events", appmw.RequirePermission("mes.add_downtime"), api.CreateDowntimeEvent)
@@ -107,6 +127,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/reports/library", appmw.RequirePermission("mes.view_kpi"), api.ReportsLibrary)
 		v1.GET("/reports/daily-production", appmw.RequirePermission("mes.view_kpi"), api.DailyProductionReport)
 		v1.GET("/reliability/summary", appmw.RequirePermission("mes.view_kpi"), api.ReliabilitySummary)
+		v1.GET("/reliability/failure-causes", appmw.RequirePermission("mes.view_kpi"), api.FailureCauses)
 		v1.GET("/shift-analysis", appmw.RequirePermission("mes.view_kpi"), api.ShiftAnalysis)
 
 		v1.GET("/ai/recommendations", appmw.RequirePermission("mes.view_ai"), api.ListAIRecommendations)

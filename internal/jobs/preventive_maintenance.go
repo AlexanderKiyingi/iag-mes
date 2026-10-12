@@ -65,5 +65,56 @@ func syncPreventiveMaintenance(ctx context.Context, st *store.Store) (created in
 			})
 		}
 	}
+	// Running hours: a template with interval_hours is due by use as well as
+	// by date, whichever comes first. A work order is raised at 90 % of the
+	// interval — the date check's 24 h lead, in hours — and the schedule is
+	// flagged overdue once the interval has run out.
+	meters, err := st.ListMeterStatus(ctx)
+	if err != nil {
+		return created, overdue, err
+	}
+	byID := map[string]store.PMSchedule{}
+	for _, sch := range schedules {
+		byID[sch.ID.String()] = sch
+	}
+	for _, m := range meters {
+		if m.State != "due" && m.State != "due_soon" {
+			continue
+		}
+		sch, ok := byID[m.ScheduleID.String()]
+		if !ok {
+			continue
+		}
+		if m.State == "due" && sch.Status == "scheduled" {
+			if err := st.MarkScheduleOverdue(ctx, sch.ID); err == nil {
+				overdue++
+				_, _ = st.CreateAlert(ctx, store.Alert{
+					Severity:   "warn",
+					Source:     sch.AssetTag,
+					Message:    fmt.Sprintf("Preventive maintenance due by running hours for %s (%.0f of %.0f h)", sch.AssetTag, deref(m.UsedHours), m.IntervalHours),
+					OccurredAt: now,
+				})
+			}
+		}
+		open, err := st.HasOpenWorkOrderForPMSchedule(ctx, sch.ID)
+		if err != nil || open {
+			continue
+		}
+		tpl, err := st.GetPMTemplate(ctx, sch.TemplateID)
+		if err != nil {
+			continue
+		}
+		if _, err := st.CreateWorkOrderFromPM(ctx, sch, *tpl); err != nil {
+			continue
+		}
+		created++
+	}
 	return created, overdue, nil
+}
+
+func deref(v *float64) float64 {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
