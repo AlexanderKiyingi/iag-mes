@@ -101,7 +101,16 @@ func (a *API) RecordChecklist(c *gin.Context) {
 
 func (a *API) signoff(role string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		item, err := a.Store.Signoff(c.Request.Context(), c.Param("num"), role, appmw.ActorName(c))
+		// Optional body: {signed_by, signed_on} for a signature on a paper
+		// sheet that someone else is entering.
+		var sig store.PaperSignature
+		if c.Request.ContentLength > 0 {
+			if err := c.ShouldBindJSON(&sig); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		item, err := a.Store.Signoff(c.Request.Context(), c.Param("num"), role, appmw.ActorName(c), sig)
 		if err != nil {
 			writeStoreError(c, err)
 			return

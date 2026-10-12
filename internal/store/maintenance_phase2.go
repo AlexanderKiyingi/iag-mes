@@ -352,6 +352,9 @@ type ChecklistEntry struct {
 	Result  string   `json:"result"`
 	Reading *float64 `json:"reading,omitempty"`
 	Note    string   `json:"note,omitempty"`
+	// By is who marked the step on the paper sheet, when someone else is
+	// typing it in. Empty means the person signed in did it.
+	By string `json:"by,omitempty"`
 }
 
 // checklistSteps reads a work order's checklist: strings, or objects with a
@@ -426,6 +429,10 @@ func (s *Store) RecordChecklist(ctx context.Context, num string, entries []Check
 			"by":     actor,
 			"at":     now,
 		}
+		if by := strings.TrimSpace(e.By); by != "" && !strings.EqualFold(by, actor) {
+			entry["by"] = by
+			entry["entered_by"] = actor
+		}
 		if e.Reading != nil {
 			entry["reading"] = *e.Reading
 		}
@@ -443,9 +450,47 @@ func (s *Store) RecordChecklist(ctx context.Context, num string, entries []Check
 	return s.PatchWorkOrder(ctx, num, WorkOrderPatch{Attrs: map[string]any{"checklist_results": list}})
 }
 
+// PaperSignature is a signature on a printed sheet that someone else is
+// typing in: who signed and the date they wrote. Recorded as the signer, with
+// the person entering it kept as entered_by — otherwise a clerk transcribing
+// a technician's sheet would appear to have done the work, and the "cannot
+// check your own work" rule would compare the wrong names.
+type PaperSignature struct {
+	SignedBy string `json:"signed_by"`
+	SignedOn string `json:"signed_on"`
+}
+
+func (p PaperSignature) entry(actor string, now time.Time) (map[string]any, error) {
+	name := strings.TrimSpace(p.SignedBy)
+	if name == "" {
+		return map[string]any{"by": actor, "at": now.Format(time.RFC3339)}, nil
+	}
+	at := now
+	if d := strings.TrimSpace(p.SignedOn); d != "" {
+		parsed, err := time.Parse("2006-01-02", d)
+		if err != nil {
+			return nil, fmt.Errorf("%w: signed_on is a date (YYYY-MM-DD)", ErrBadInput)
+		}
+		if parsed.After(now) {
+			return nil, fmt.Errorf("%w: a sheet cannot be signed in the future", ErrBadInput)
+		}
+		at = parsed
+	}
+	out := map[string]any{"by": name, "at": at.Format(time.RFC3339), "on_paper": true}
+	if !strings.EqualFold(name, actor) {
+		out["entered_by"] = actor
+	}
+	return out, nil
+}
+
 // Signoff records who did the work (technician, before completion) or who
-// checked it (supervisor, after completion).
-func (s *Store) Signoff(ctx context.Context, num, role, actor string) (*WorkOrder, error) {
+// checked it (supervisor, after completion). Without a paper signature the
+// signer is the person signed in.
+func (s *Store) Signoff(ctx context.Context, num, role, actor string, paper ...PaperSignature) (*WorkOrder, error) {
+	var sig PaperSignature
+	if len(paper) > 0 {
+		sig = paper[0]
+	}
 	wo, err := s.GetWorkOrder(ctx, num)
 	if err != nil {
 		return nil, err
@@ -454,22 +499,25 @@ func (s *Store) Signoff(ctx context.Context, num, role, actor string) (*WorkOrde
 	if signoff == nil {
 		signoff = map[string]any{}
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	entry, err := sig.entry(actor, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
 	switch role {
 	case "technician":
 		if wo.Status == "completed" || wo.Status == "cancelled" {
 			return nil, fmt.Errorf("%w: work order %s is already %s", ErrConflict, num, wo.Status)
 		}
-		signoff["technician"] = map[string]any{"by": actor, "at": now}
+		signoff["technician"] = entry
 	case "supervisor":
 		if wo.Status != "completed" {
 			return nil, fmt.Errorf("%w: a supervisor checks the work once it is completed", ErrConflict)
 		}
 		tech, _ := signoff["technician"].(map[string]any)
-		if by, _ := tech["by"].(string); by != "" && strings.EqualFold(by, actor) {
+		if by, _ := tech["by"].(string); by != "" && strings.EqualFold(by, entry["by"].(string)) {
 			return nil, fmt.Errorf("%w: the technician who did the work cannot also check it", ErrConflict)
 		}
-		signoff["supervisor"] = map[string]any{"by": actor, "at": now}
+		signoff["supervisor"] = entry
 	default:
 		return nil, fmt.Errorf("%w: role must be technician or supervisor", ErrBadInput)
 	}
