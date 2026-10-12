@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	appmw "iag-mes/backend/internal/middleware"
 	"iag-mes/backend/internal/store"
 )
 
@@ -57,6 +58,15 @@ func (a *API) CreateWorkOrder(c *gin.Context) {
 		return
 	}
 	body.Priority = priority
+	// Who raised it — the approval rule's four eyes need to know.
+	if body.Attrs == nil {
+		body.Attrs = map[string]any{}
+	}
+	actor := appmw.ActorName(c)
+	if _, ok := body.Attrs["raised_by"]; !ok {
+		body.Attrs["raised_by"] = actor
+	}
+	a.Store.ApplyApprovalRule(c.Request.Context(), &body, actor)
 	if body.Num == "" {
 		num, err := a.Store.NextWorkOrderNum(c.Request.Context())
 		if err != nil {

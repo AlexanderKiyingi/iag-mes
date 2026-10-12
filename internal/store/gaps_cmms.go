@@ -37,6 +37,7 @@ func (s *Store) PatchWorkOrder(ctx context.Context, num string, patch WorkOrderP
 	if err != nil {
 		return nil, err
 	}
+	priorStatus := wo.Status
 	if patch.Title != nil {
 		wo.Title = *patch.Title
 	}
@@ -64,6 +65,20 @@ func (s *Store) PatchWorkOrder(ctx context.Context, num string, patch WorkOrderP
 		}
 		for k, v := range patch.Attrs {
 			wo.Attrs[k] = v
+		}
+	}
+	// A status moved by PATCH meets the same rules as /start and /complete;
+	// otherwise the gates would only stop the clients that use those routes.
+	if wo.Status != priorStatus {
+		switch wo.Status {
+		case "in_progress":
+			if err := CheckStart(wo); err != nil {
+				return nil, err
+			}
+		case "completed":
+			if err := CheckCompletion(wo); err != nil {
+				return nil, err
+			}
 		}
 	}
 	attrs, _ := json.Marshal(wo.Attrs)

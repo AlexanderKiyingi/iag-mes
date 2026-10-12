@@ -131,6 +131,10 @@ func (s *Store) CompleteWorkOrder(ctx context.Context, num string) (*WorkOrder, 
 	if err != nil {
 		return nil, err
 	}
+	// Approval, checklist, sign-off and failure code (maintenance_phase2.go).
+	if err := CheckCompletion(wo); err != nil {
+		return nil, err
+	}
 	var pmScheduleID *uuid.UUID
 	_ = tx.QueryRow(ctx, `SELECT pm_schedule_id FROM mes_work_orders WHERE num=$1`, num).Scan(&pmScheduleID)
 	now := time.Now().UTC()
@@ -156,6 +160,8 @@ func (s *Store) CompleteWorkOrder(ctx context.Context, num string) (*WorkOrder, 
 	if pmScheduleID != nil {
 		_ = s.AdvancePMScheduleAfterComplete(ctx, *pmScheduleID)
 	}
+	// A job raised from a fault report closes the report and its stop.
+	s.completeFaultReport(ctx, wo)
 	return wo, nil
 }
 
