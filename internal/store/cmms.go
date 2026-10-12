@@ -117,6 +117,7 @@ func (s *Store) CreateWorkOrder(ctx context.Context, wo WorkOrder) (*WorkOrder, 
 		return nil, err
 	}
 	wo.Attrs = scanAttrs(attrs)
+	s.NotifyAssigned(ctx, &wo)
 	return &wo, nil
 }
 
@@ -129,6 +130,10 @@ func (s *Store) CompleteWorkOrder(ctx context.Context, num string) (*WorkOrder, 
 
 	wo, err := s.getWorkOrderTx(ctx, tx, num)
 	if err != nil {
+		return nil, err
+	}
+	// Approval, checklist, sign-off and failure code (maintenance_phase2.go).
+	if err := CheckCompletion(wo); err != nil {
 		return nil, err
 	}
 	var pmScheduleID *uuid.UUID
@@ -156,6 +161,8 @@ func (s *Store) CompleteWorkOrder(ctx context.Context, num string) (*WorkOrder, 
 	if pmScheduleID != nil {
 		_ = s.AdvancePMScheduleAfterComplete(ctx, *pmScheduleID)
 	}
+	// A job raised from a fault report closes the report and its stop.
+	s.completeFaultReport(ctx, wo)
 	return wo, nil
 }
 

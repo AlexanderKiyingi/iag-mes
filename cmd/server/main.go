@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -58,6 +60,32 @@ func main() {
 		if err := migrate.Up(ctx, pool); err != nil {
 			log.Fatalf("migrate: %v", err)
 		}
+	} else {
+		// Production sets ENVIRONMENT=production, which forbids AUTO_MIGRATE, so
+		// this is the path every production boot takes. It used to do nothing at
+		// all: the binary served against whatever schema happened to be there.
+		//
+		// On 2026-10-05 that meant serving with 013 and 014 unapplied — every
+		// read of downtime events or plants answered 500 with `column "state"
+		// does not exist`, and three older migrations had been missing silently
+		// for weeks before anyone noticed. A deploy that needs a migration should
+		// fail as a deploy, not as a 500 per request.
+		//
+		// Refusing is safe to be strict about because the fix is one command and
+		// the message names it. A database the service cannot reach at all is a
+		// different failure and is left to the pool, which has already failed by
+		// here.
+		pending, err := migrate.Pending(ctx, pool)
+		if err != nil {
+			log.Fatalf("schema check: %v", err)
+		}
+		if len(pending) > 0 {
+			log.Fatalf("refusing to serve: %d migration(s) not applied: %s\n"+
+				"apply them out of band, then redeploy:\n"+
+				"  DATABASE_URL=... go run ./cmd/migrate",
+				len(pending), strings.Join(pending, ", "))
+		}
+		slog.Info("schema is current", "auto_migrate", false)
 	}
 
 	st := store.New(pool)

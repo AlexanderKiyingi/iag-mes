@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"iag-mes/backend/internal/events"
+	"math"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -103,9 +105,75 @@ type PlantPatch struct {
 	Country  *string  `json:"country"`
 	GPSLat   *float64 `json:"gps_lat"`
 	GPSLng   *float64 `json:"gps_lng"`
+	// LabourRates sets the hourly rate maintenance labour is costed at, per
+	// technician role ("*" is the rate for anyone whose role has none). Keys
+	// are merged into attrs.labour_rates: a role not named is left alone, and
+	// a null rate removes that role. Rates are configuration, not pay — the
+	// salary itself stays in HR.
+	LabourRates map[string]*float64 `json:"labour_rates"`
+	// LabourCurrency is the currency those rates are in (ISO 4217).
+	LabourCurrency *string `json:"labour_currency"`
+	// ApprovalThreshold is the estimated cost at or above which a new work
+	// order at this factory waits for approval before it can start. Zero
+	// turns approval off.
+	ApprovalThreshold *float64 `json:"approval_threshold"`
+}
+
+// MaxLabourRate bounds an hourly rate. It is generous for UGX (the platform's
+// base currency) and exists to catch a monthly salary typed into an hourly box.
+const MaxLabourRate = 10_000_000
+
+// ValidateLabourRates refuses what the cost report could not use: a blank or
+// overlong role, a negative or absurd rate, or a currency that is not a code.
+func (in PlantPatch) ValidateLabourRates() error {
+	for role, rate := range in.LabourRates {
+		r := strings.TrimSpace(role)
+		if r == "" || len(r) > 80 {
+			return fmt.Errorf("%w: a labour rate needs a role of 1–80 characters (\"*\" for everyone else)", ErrBadInput)
+		}
+		if rate != nil && (*rate < 0 || *rate > MaxLabourRate) {
+			return fmt.Errorf("%w: the hourly rate for %q must be between 0 and %d", ErrBadInput, r, MaxLabourRate)
+		}
+	}
+	if in.LabourCurrency != nil {
+		c := strings.TrimSpace(*in.LabourCurrency)
+		if len(c) != 3 || strings.ToUpper(c) != c {
+			return fmt.Errorf("%w: labour_currency must be a three-letter code such as UGX", ErrBadInput)
+		}
+	}
+	if in.ApprovalThreshold != nil && (*in.ApprovalThreshold < 0 || math.IsNaN(*in.ApprovalThreshold)) {
+		return fmt.Errorf("%w: approval_threshold is zero (off) or more", ErrBadInput)
+	}
+	return nil
 }
 
 func (s *Store) UpdatePlant(ctx context.Context, code string, in PlantPatch) (*Plant, error) {
+	if err := in.ValidateLabourRates(); err != nil {
+		return nil, err
+	}
+	// Merged into attrs in SQL rather than read-modify-write here: the
+	// production.shifts.changed consumer writes attrs.production_shifts on the
+	// same row, and a read-modify-write would race it.
+	var rates []byte
+	if len(in.LabourRates) > 0 {
+		clean := make(map[string]*float64, len(in.LabourRates))
+		for role, rate := range in.LabourRates {
+			clean[strings.TrimSpace(role)] = rate
+		}
+		rates, _ = json.Marshal(clean)
+	}
+	// Top-level attrs keys this patch sets, merged in SQL like the rates.
+	top := map[string]any{}
+	if in.LabourCurrency != nil {
+		top["labour_currency"] = strings.TrimSpace(*in.LabourCurrency)
+	}
+	if in.ApprovalThreshold != nil {
+		top["approval_threshold"] = *in.ApprovalThreshold
+	}
+	var currency []byte
+	if len(top) > 0 {
+		currency, _ = json.Marshal(top)
+	}
 	var p Plant
 	var attrs []byte
 	err := s.pool.QueryRow(ctx, `
@@ -121,11 +189,15 @@ func (s *Store) UpdatePlant(ctx context.Context, code string, in PlantPatch) (*P
 		  -- The pair moves together or not at all; the CHECK refuses half of one.
 		  gps_lat  = COALESCE($10, gps_lat),
 		  gps_lng  = COALESCE($11, gps_lng),
+		  attrs = (CASE WHEN $12::jsonb IS NULL THEN COALESCE(attrs, '{}'::jsonb) ELSE jsonb_set(
+		            COALESCE(attrs, '{}'::jsonb), '{labour_rates}',
+		            jsonb_strip_nulls(COALESCE(attrs->'labour_rates', '{}'::jsonb) || $12::jsonb)) END)
+		          || COALESCE($13::jsonb, '{}'::jsonb),
 		  updated_at = NOW()
 		 WHERE code = $1
 		RETURNING `+plantColumns,
 		code, in.Name, in.Region, in.Timezone, in.Status,
-		in.Address, in.City, in.District, in.Country, in.GPSLat, in.GPSLng).Scan(
+		in.Address, in.City, in.District, in.Country, in.GPSLat, in.GPSLng, rates, currency).Scan(
 		&p.ID, &p.Code, &p.Name, &p.Region, &p.Timezone, &p.Status,
 		&p.Address, &p.City, &p.District, &p.Country, &p.GPSLat, &p.GPSLng,
 		&attrs, &p.CreatedAt, &p.UpdatedAt)
@@ -253,6 +325,61 @@ func (s *Store) CreateSection(ctx context.Context, plantCode string, sec Section
 	}
 	sec.PlantCode = plantCode
 	sec.Attrs = scanAttrs(attrs)
+	return &sec, nil
+}
+
+// SectionPatch corrects a shop floor in place. Every field is optional, so
+// renaming a floor does not reset the line type it was set up with.
+//
+// There was no edit path at all: CreateSection is a plain INSERT, so a floor
+// typed in wrongly — or one whose line changed — could only be left as it was.
+// The frontend reports this honestly rather than hiding it (the records route
+// sends `capabilities.update`, and the screen drops Edit when it is false), so
+// the gap showed as a Shop Floors register you could add to and never correct.
+//
+// `code` is not patchable: it is half the natural key, assets hang off the
+// section by id, and production projects the code onto prod_machines.section.
+// Renaming it would silently orphan those references, so a floor that needs a
+// different code is a new floor and a move of its machines.
+type SectionPatch struct {
+	Name     *string        `json:"name"`
+	LineType *string        `json:"line_type"`
+	Attrs    map[string]any `json:"attrs"`
+}
+
+// UpdateSection patches one shop floor of one factory.
+//
+// Scoped by plant as well as code because section codes are unique per plant
+// only (mes_sections UNIQUE (plant_id, code)) — "wet" at one factory and "wet"
+// at another are different floors, and a patch that matched on code alone
+// would edit whichever came first.
+func (s *Store) UpdateSection(ctx context.Context, plantCode, sectionCode string, in SectionPatch) (*Section, error) {
+	var attrs []byte
+	if in.Attrs != nil {
+		attrs, _ = json.Marshal(in.Attrs)
+	}
+	var sec Section
+	var stored []byte
+	err := s.pool.QueryRow(ctx, `
+		UPDATE mes_sections sec SET
+		  name      = COALESCE($3, sec.name),
+		  line_type = COALESCE($4, sec.line_type),
+		  attrs     = COALESCE($5::jsonb, sec.attrs),
+		  updated_at = NOW()
+		 FROM mes_plants p
+		 WHERE sec.plant_id = p.id AND p.code = $1 AND sec.code = $2
+		RETURNING sec.id, sec.plant_id, p.code, sec.code, sec.name, sec.line_type,
+		          sec.attrs, sec.created_at, sec.updated_at`,
+		plantCode, sectionCode, in.Name, in.LineType, attrs).Scan(
+		&sec.ID, &sec.PlantID, &sec.PlantCode, &sec.Code, &sec.Name, &sec.LineType,
+		&stored, &sec.CreatedAt, &sec.UpdatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	sec.Attrs = scanAttrs(stored)
 	return &sec, nil
 }
 

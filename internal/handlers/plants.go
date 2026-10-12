@@ -80,6 +80,22 @@ func (a *API) CreateSection(c *gin.Context) {
 	c.JSON(http.StatusCreated, item)
 }
 
+// PatchSection corrects a shop floor: its name, its line type. The code is
+// fixed — it is half the natural key and machines are projected onto it.
+func (a *API) PatchSection(c *gin.Context) {
+	var body store.SectionPatch
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	item, err := a.Store.UpdateSection(c.Request.Context(), c.Param("code"), c.Param("section"), body)
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
 func (a *API) ListAssets(c *gin.Context) {
 	items, err := a.Store.ListAssets(c.Request.Context(), store.AssetFilter{
 		PlantCode: c.Query("plant"),

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	appmw "iag-mes/backend/internal/middleware"
 	"iag-mes/backend/internal/store"
 )
 
@@ -57,6 +59,15 @@ func (a *API) CreateWorkOrder(c *gin.Context) {
 		return
 	}
 	body.Priority = priority
+	// Who raised it — the approval rule's four eyes need to know.
+	if body.Attrs == nil {
+		body.Attrs = map[string]any{}
+	}
+	actor := appmw.ActorName(c)
+	if _, ok := body.Attrs["raised_by"]; !ok {
+		body.Attrs["raised_by"] = actor
+	}
+	a.Store.ApplyApprovalRule(c.Request.Context(), &body, actor)
 	if body.Num == "" {
 		num, err := a.Store.NextWorkOrderNum(c.Request.Context())
 		if err != nil {
@@ -69,6 +80,14 @@ func (a *API) CreateWorkOrder(c *gin.Context) {
 	if err != nil {
 		writeStoreError(c, err)
 		return
+	}
+	if appr, _ := item.Attrs["approval"].(map[string]any); appr != nil && appr["state"] == "pending" {
+		a.Store.Notify(c.Request.Context(), store.Notice{
+			Audience: store.AudienceApprovals,
+			Title:    item.Num + " needs approval",
+			Message:  fmt.Sprintf("%s on %s, estimated at %v (threshold %v). Raised by %s.", item.Title, item.AssetTag, appr["estimate"], appr["threshold"], actor),
+			Key:      item.AssetTag,
+		})
 	}
 	c.JSON(http.StatusCreated, item)
 }

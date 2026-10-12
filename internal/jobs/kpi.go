@@ -2,7 +2,6 @@ package jobs
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"iag-mes/backend/internal/store"
@@ -105,26 +104,11 @@ func scheduleAttainment(openWOs int) float64 {
 }
 
 // EvaluateTelemetryAlerts creates alerts when vibration exceeds threshold.
+// EvaluateTelemetryAlerts applies the active alert rules (mes_alert_rules,
+// "metric op number") to recent sensor readings. A breach raises a fault
+// report — once per machine and rule while it is open — which maintenance
+// triages like any other. It used to raise a fresh alert on every run for
+// as long as a reading stayed high, and only for vibration over 4.0.
 func EvaluateTelemetryAlerts(ctx context.Context, st *store.Store) (int, error) {
-	points, err := st.ListTelemetry(ctx, "")
-	if err != nil {
-		return 0, err
-	}
-	created := 0
-	for _, p := range points {
-		if p.Metric != "vibration_rms" || p.Value <= 4.0 {
-			continue
-		}
-		msg := fmt.Sprintf("%s vibration RMS %.2f exceeds threshold 4.0", p.AssetTag, p.Value)
-		_, err := st.CreateAlert(ctx, store.Alert{
-			Severity:   "crit",
-			Source:     p.AssetTag,
-			Message:    msg,
-			OccurredAt: time.Now().UTC(),
-		})
-		if err == nil {
-			created++
-		}
-	}
-	return created, nil
+	return st.EvaluateConditionRules(ctx, time.Now().UTC())
 }
