@@ -9,7 +9,9 @@ import (
 	"github.com/google/uuid"
 
 	"iag-mes/backend/internal/db"
+	"iag-mes/backend/internal/events"
 	"iag-mes/backend/internal/migrate"
+	"iag-mes/backend/internal/outbox"
 )
 
 // assetDeletePool mirrors the other database-backed tests here: db.NewPool
@@ -252,5 +254,56 @@ func TestDeletePlant(t *testing.T) {
 	}
 	if err := s.DeletePlant(ctx, plant); err != nil {
 		t.Fatalf("empty factory should delete: %v", err)
+	}
+}
+
+// The deletion has to be announced, or iag-production keeps a projected row
+// for a machine that no longer exists. Created and updated were announced;
+// deletion was not, which is the whole reason this test exists.
+//
+// The bus is a concrete type with no seam to fake, so this asserts on the
+// outbox it enqueues into -- which is what the relay actually ships.
+func TestDeleteAssetAnnouncesTheDeletion(t *testing.T) {
+	s, ctx := assetDeletePool(t)
+	// A broker address is required for the bus to be enabled at all; nothing
+	// connects to it, because Publish enqueues into the outbox and returns
+	// before it would reach Kafka.
+	bus := events.New(events.Config{Enabled: true, Brokers: []string{"127.0.0.1:1"}})
+	bus.SetOutbox(outbox.NewStore(s.Pool()))
+	s.SetEventBus(bus)
+	t.Cleanup(func() { s.SetEventBus(nil) })
+
+	countFor := func(tag string) int {
+		var n int
+		if err := s.Pool().QueryRow(ctx, `
+			SELECT COUNT(*)::int FROM mes_event_outbox
+			WHERE event_type = $1 AND payload::text LIKE '%' || $2 || '%'`,
+			events.TypeAssetDeleted, tag).Scan(&n); err != nil {
+			t.Fatalf("outbox read: %v", err)
+		}
+		return n
+	}
+
+	tag := newMachine(t, s, ctx)
+	if err := s.DeleteAsset(ctx, tag); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if n := countFor(tag); n != 1 {
+		t.Fatalf("want one %s carrying %s, got %d", events.TypeAssetDeleted, tag, n)
+	}
+
+	// A refused delete must announce nothing: the machine is still there, and
+	// a consumer acting on it would drop a row that still exists.
+	kept := newMachine(t, s, ctx)
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO mes_work_orders (num, title, asset_tag) VALUES ($1,'WO',$2)`,
+		"WO-"+uuid.NewString()[:8], kept); err != nil {
+		t.Fatalf("work order: %v", err)
+	}
+	if err := s.DeleteAsset(ctx, kept); err == nil {
+		t.Fatal("expected the delete to be refused")
+	}
+	if n := countFor(kept); n != 0 {
+		t.Fatalf("a refused delete announced %d times", n)
 	}
 }

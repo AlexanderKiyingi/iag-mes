@@ -25,6 +25,11 @@ const (
 	// projection (prod_machines) current without reading this schema.
 	TypeAssetCreated = "mes.asset.created"
 	TypeAssetUpdated = "mes.asset.updated"
+	// A machine that was removed rather than retired. Without this the
+	// projection keeps a row for a machine that no longer exists: created and
+	// updated were announced, deletion was not, so a tag deleted here stayed
+	// listed in iag-production and stayed eligible for its KPI rollups.
+	TypeAssetDeleted = "mes.asset.deleted"
 
 	TypeAlertRaised = "mes.alert.raised"
 
@@ -35,7 +40,8 @@ const (
 
 func TopicForEvent(eventType string) string {
 	switch eventType {
-	case TypeDowntimeStarted, TypeDowntimeEnded, TypeWorkOrderDone, TypeAlertRaised, TypeAssetCreated, TypeAssetUpdated,
+	case TypeDowntimeStarted, TypeDowntimeEnded, TypeWorkOrderDone, TypeAlertRaised,
+		TypeAssetCreated, TypeAssetUpdated, TypeAssetDeleted,
 		TypeProcurementRequested:
 		return TopicOperations
 	default:
