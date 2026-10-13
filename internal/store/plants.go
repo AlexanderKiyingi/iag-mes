@@ -664,6 +664,13 @@ func (s *Store) DeleteAsset(ctx context.Context, tag string) error {
 	if err != nil {
 		return err
 	}
+	// Read the machine while it still exists: the deletion is announced so
+	// iag-production can drop its projected row, and the announcement carries
+	// the same shape as created and updated.
+	gone, err := s.GetAssetByTag(ctx, tag)
+	if err != nil {
+		return err
+	}
 
 	// Which of those tables this deployment actually has, asked once and up
 	// front. Querying a missing table inside the transaction aborts it, and
@@ -718,5 +725,12 @@ func (s *Store) DeleteAsset(ctx context.Context, tag string) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM mes_assets WHERE id = $1`, id); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	// After the commit, as the other asset events are: a consumer that reacts
+	// to a deletion that was then rolled back would drop a row that still
+	// exists here.
+	s.publishAsset(ctx, events.TypeAssetDeleted, gone)
+	return nil
 }
