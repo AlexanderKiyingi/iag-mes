@@ -125,6 +125,19 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		// Every preventive job due over a range — the annual calendar
 		// (internal/store/forecast.go).
 		v1.GET("/maintenance/forecast", appmw.RequirePermission("mes.view_work_order"), api.MaintenanceForecast)
+		// Shutdowns (internal/store/shutdown.go): planning and running them
+		// writes planned stops, so it takes the downtime permission; putting
+		// jobs in takes the work-order one; production records its agreement
+		// with the permission it reports faults with.
+		v1.GET("/shutdowns", appmw.RequirePermission("mes.view_work_order"), api.ListShutdowns)
+		v1.POST("/shutdowns", appmw.RequirePermission("mes.add_downtime"), api.CreateShutdown)
+		v1.GET("/shutdowns/:code", appmw.RequirePermission("mes.view_work_order"), api.GetShutdown)
+		v1.PATCH("/shutdowns/:code", appmw.RequirePermission("mes.add_downtime"), api.PatchShutdown)
+		v1.POST("/shutdowns/:code/jobs", appmw.RequirePermission("mes.change_work_order"), api.SetShutdownJobs)
+		v1.POST("/shutdowns/:code/agree", appmw.RequireAnyPermission("mes.report_fault", "mes.add_downtime"), api.AgreeShutdown)
+		v1.POST("/shutdowns/:code/start", appmw.RequirePermission("mes.add_downtime"), shutdownStep(api.Store.StartShutdown))
+		v1.POST("/shutdowns/:code/finish", appmw.RequirePermission("mes.add_downtime"), shutdownStep(api.Store.FinishShutdown))
+		v1.POST("/shutdowns/:code/cancel", appmw.RequirePermission("mes.add_downtime"), shutdownStep(api.Store.CancelShutdown))
 
 		v1.GET("/kpis/definitions", appmw.RequirePermission("mes.view_kpi"), api.ListKPIDefinitions)
 		v1.GET("/kpis/snapshots", appmw.RequirePermission("mes.view_kpi"), api.ListKPISnapshots)
