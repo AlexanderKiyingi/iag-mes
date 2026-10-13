@@ -1,7 +1,8 @@
 package store
 
 // The maintenance forecast: every preventive job due over a range of dates,
-// for the annual calendar and for shutdown and parts planning.
+// for the annual calendar and for shutdown and parts planning. Each job
+// carries its template's parts, which the parts forecast adds up.
 //
 // Nothing is stored. Each schedule is projected forward from its next due
 // date:
@@ -60,6 +61,8 @@ type ForecastItem struct {
 	EstimatedHours *float64 `json:"estimated_hours,omitempty"`
 	CrewSize       *float64 `json:"crew_size,omitempty"`
 	FixedDates     bool     `json:"fixed_dates"`
+	// Parts the job uses, from its template (planned_parts.go).
+	Parts []PlannedPart `json:"parts"`
 }
 
 // ForecastGap is a schedule that could not be fully projected, and why.
@@ -297,6 +300,7 @@ func (s *Store) MaintenanceForecast(ctx context.Context, from, to time.Time, pla
 				daysPerInterval = interval / *rate
 			}
 		}
+		parts := TemplateParts(tpl)
 		dates := projectSchedule(sch.NextDueAt.UTC(), tpl.IntervalDays, FixedDates(tpl), hoursFirst, daysPerInterval, now, from, to)
 		for i, p := range dates {
 			item := ForecastItem{
@@ -316,6 +320,7 @@ func (s *Store) MaintenanceForecast(ctx context.Context, from, to time.Time, pla
 				EstimatedHours: templateFloat(tpl, "estimated_hours"),
 				CrewSize:       templateFloat(tpl, "crew_size"),
 				FixedDates:     FixedDates(tpl),
+				Parts:          parts,
 			}
 			if i == 0 {
 				item.WorkOrder = openWO[sch.ID]

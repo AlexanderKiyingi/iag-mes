@@ -30,6 +30,11 @@ type PMSchedulePatch struct {
 }
 
 func (s *Store) PatchPMTemplate(ctx context.Context, id uuid.UUID, patch PMTemplatePatch) (*PMTemplate, error) {
+	if patch.Attrs != nil {
+		if err := NormalizeTemplateParts(patch.Attrs); err != nil {
+			return nil, err
+		}
+	}
 	var t PMTemplate
 	var checklist, attrs []byte
 	err := s.pool.QueryRow(ctx, `
