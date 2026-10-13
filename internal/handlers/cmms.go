@@ -67,6 +67,12 @@ func (a *API) CreateWorkOrder(c *gin.Context) {
 	if _, ok := body.Attrs["raised_by"]; !ok {
 		body.Attrs["raised_by"] = actor
 	}
+	// A commissioning job takes its acceptance tests from the template for
+	// the machine's category (installation.go).
+	if err := a.Store.PrepareInstallationWork(c.Request.Context(), &body); err != nil {
+		writeStoreError(c, err)
+		return
+	}
 	a.Store.ApplyApprovalRule(c.Request.Context(), &body, actor)
 	if body.Num == "" {
 		num, err := a.Store.NextWorkOrderNum(c.Request.Context())
@@ -81,6 +87,7 @@ func (a *API) CreateWorkOrder(c *gin.Context) {
 		writeStoreError(c, err)
 		return
 	}
+	a.Store.MarkInstallationStarted(c.Request.Context(), item)
 	if appr, _ := item.Attrs["approval"].(map[string]any); appr != nil && appr["state"] == "pending" {
 		a.Store.Notify(c.Request.Context(), store.Notice{
 			Audience: store.AudienceApprovals,

@@ -422,6 +422,11 @@ func (s *Store) RecordChecklist(ctx context.Context, num string, entries []Check
 		if result == "fail" && strings.TrimSpace(e.Note) == "" {
 			return nil, fmt.Errorf("%w: step %d failed — say what was found", ErrBadInput, e.Index+1)
 		}
+		// Acceptance limits (installation.go): a reading outside them is not
+		// a pass, and a commissioning test is passed on a measurement.
+		if err := checkAcceptance(wo, e, result); err != nil {
+			return nil, err
+		}
 		entry := map[string]any{
 			"index":  e.Index,
 			"step":   steps[e.Index],
@@ -447,7 +452,15 @@ func (s *Store) RecordChecklist(ctx context.Context, num string, entries []Check
 			list = append(list, r)
 		}
 	}
-	return s.PatchWorkOrder(ctx, num, WorkOrderPatch{Attrs: map[string]any{"checklist_results": list}})
+	patch := map[string]any{"checklist_results": list}
+	// A changed test result on a commissioning job is not the result its
+	// acceptors signed for.
+	if isType(wo, WOTypeCommissioning) {
+		if handover, withdrawn := withdrawAcceptance(wo.Attrs); withdrawn {
+			patch["handover"] = handover
+		}
+	}
+	return s.PatchWorkOrder(ctx, num, WorkOrderPatch{Attrs: patch})
 }
 
 // PaperSignature is a signature on a printed sheet that someone else is
@@ -737,13 +750,19 @@ func CheckStart(wo *WorkOrder) error {
 
 // CheckCompletion says what a work order still needs before it can be
 // completed: approval, every checklist step marked and the technician's
-// sign-off, and for a breakdown or corrective job, its failure code.
+// sign-off, and for a breakdown or corrective job, its failure code. A
+// commissioning job needs its acceptance tests passed and its handover signed
+// instead.
 func CheckCompletion(wo *WorkOrder) error {
 	if err := CheckStart(wo); err != nil {
 		return err
 	}
 	var missing []string
-	if steps := checklistSteps(wo.Attrs); len(steps) > 0 {
+	if isType(wo, WOTypeCommissioning) {
+		// Tests and a three-party handover stand in for the checklist and
+		// the technician's sign-off (installation.go).
+		missing = checkCommissioning(wo)
+	} else if steps := checklistSteps(wo.Attrs); len(steps) > 0 {
 		results := checklistResultsOf(wo.Attrs)
 		open := 0
 		for i := range steps {

@@ -163,6 +163,9 @@ func (s *Store) CompleteWorkOrder(ctx context.Context, num string) (*WorkOrder, 
 	}
 	// A job raised from a fault report closes the report and its stop.
 	s.completeFaultReport(ctx, wo)
+	// Installation raises commissioning; commissioning puts the machine in
+	// service (installation.go).
+	s.afterInstallationWork(ctx, wo)
 	return wo, nil
 }
 

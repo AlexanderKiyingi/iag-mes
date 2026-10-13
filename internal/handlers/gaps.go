@@ -84,6 +84,12 @@ func (a *API) CreatePMSchedule(c *gin.Context) {
 	if body.NextDueAt.IsZero() {
 		body.NextDueAt = time.Now().UTC()
 	}
+	// A commissioning checklist is run once, when a machine goes in; it has
+	// no interval to schedule on.
+	if tpl, err := a.Store.GetPMTemplate(c.Request.Context(), body.TemplateID); err == nil && store.IsCommissioningTemplate(*tpl) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "a commissioning template is not scheduled; raise a commissioning work order instead"})
+		return
+	}
 	item, err := a.Store.CreatePMSchedule(c.Request.Context(), body)
 	if err != nil {
 		writeStoreError(c, err)

@@ -83,6 +83,10 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		// Approving work and checking finished work are supervisor acts:
 		// technicians hold complete_work_order, so it cannot stand in here.
 		v1.POST("/work-orders/:num/signoff/supervisor", appmw.RequirePermission("mes.approve_work_order"), api.signoff("supervisor"))
+		// Commissioning handover: installer, engineering, production
+		// (internal/store/installation.go). A production user may sign for
+		// production with mes.report_fault; the other two are maintenance's.
+		v1.POST("/work-orders/:num/handover/:party", handoverPermission(), api.SignHandover)
 		v1.POST("/work-orders/:num/failure", appmw.RequirePermission("mes.change_work_order"), api.SetFailure)
 		v1.POST("/work-orders/:num/approve", appmw.RequirePermission("mes.approve_work_order"), api.decideApproval(true))
 		v1.POST("/work-orders/:num/reject", appmw.RequirePermission("mes.approve_work_order"), api.decideApproval(false))
@@ -118,6 +122,9 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		// nothing routed to them, so every technician field was free text.
 		v1.GET("/technicians", appmw.RequirePermission("mes.view_work_order"), api.ListTechnicians)
 		v1.GET("/maintenance/calendar", appmw.RequirePermission("mes.view_work_order"), api.MaintenanceCalendar)
+		// Every preventive job due over a range — the annual calendar
+		// (internal/store/forecast.go).
+		v1.GET("/maintenance/forecast", appmw.RequirePermission("mes.view_work_order"), api.MaintenanceForecast)
 
 		v1.GET("/kpis/definitions", appmw.RequirePermission("mes.view_kpi"), api.ListKPIDefinitions)
 		v1.GET("/kpis/snapshots", appmw.RequirePermission("mes.view_kpi"), api.ListKPISnapshots)

@@ -102,6 +102,9 @@ func (s *Store) PatchWorkOrder(ctx context.Context, num string, patch WorkOrderP
 	if wo.Assignee != nil && *wo.Assignee != "" && !strings.EqualFold(*wo.Assignee, priorAssignee) {
 		s.NotifyAssigned(ctx, wo)
 	}
+	if wo.Status == "completed" && priorStatus != "completed" {
+		s.afterInstallationWork(ctx, wo)
+	}
 	return wo, nil
 }
 
@@ -218,7 +221,8 @@ func (s *Store) GetPMTemplate(ctx context.Context, id uuid.UUID) (*PMTemplate, e
 
 func (s *Store) AdvancePMScheduleAfterComplete(ctx context.Context, scheduleID uuid.UUID) error {
 	schRows, err := s.pool.Query(ctx, `
-		SELECT s.id, s.template_id, s.asset_tag, s.next_due_at, s.last_done_at, s.status, t.interval_days
+		SELECT s.id, s.template_id, s.asset_tag, s.next_due_at, s.last_done_at, s.status, t.interval_days,
+		       COALESCE((t.attrs->>'fixed_dates')::boolean, false)
 		FROM mes_pm_schedules s
 		JOIN mes_pm_templates t ON t.id = s.template_id
 		WHERE s.id = $1`, scheduleID)
@@ -231,13 +235,34 @@ func (s *Store) AdvancePMScheduleAfterComplete(ctx context.Context, scheduleID u
 	}
 	var sch PMSchedule
 	var intervalDays int
-	if err := schRows.Scan(&sch.ID, &sch.TemplateID, &sch.AssetTag, &sch.NextDueAt, &sch.LastDoneAt, &sch.Status, &intervalDays); err != nil {
+	var fixed bool
+	if err := schRows.Scan(&sch.ID, &sch.TemplateID, &sch.AssetTag, &sch.NextDueAt, &sch.LastDoneAt, &sch.Status, &intervalDays, &fixed); err != nil {
 		return err
 	}
+	schRows.Close()
 	now := time.Now().UTC()
-	next := now.Add(time.Duration(intervalDays) * 24 * time.Hour)
+	next := nextDueAfter(sch.NextDueAt, intervalDays, fixed, now)
 	_, err = s.pool.Exec(ctx, `
 		UPDATE mes_pm_schedules SET last_done_at=$2, next_due_at=$3, status='scheduled', updated_at=NOW()
 		WHERE id=$1`, scheduleID, now, next)
 	return err
+}
+
+// nextDueAfter is a schedule's next due date once a job is done at `done`.
+// By default it is counted from the day the job was done, so a late job
+// pushes every later one back. A template with fixed_dates keeps its
+// calendar: the next date is the old one plus whole intervals, the first
+// still ahead — what an annual plan needs to stay true.
+func nextDueAfter(prevDue time.Time, intervalDays int, fixed bool, done time.Time) time.Time {
+	if intervalDays <= 0 {
+		intervalDays = 30
+	}
+	if !fixed {
+		return done.AddDate(0, 0, intervalDays)
+	}
+	next := prevDue.AddDate(0, 0, intervalDays)
+	for !next.After(done) {
+		next = next.AddDate(0, 0, intervalDays)
+	}
+	return next
 }
