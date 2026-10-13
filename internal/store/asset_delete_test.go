@@ -307,3 +307,88 @@ func TestDeleteAssetAnnouncesTheDeletion(t *testing.T) {
 		t.Fatalf("a refused delete announced %d times", n)
 	}
 }
+
+// Removing the records that keep a machine alive.
+//
+// These are history and history is normally corrected rather than removed --
+// but a probe's work order is not history, and while it exists the machine it
+// names cannot be deleted and the shop floor under it cannot be emptied.
+func TestDeleteRecordsCreatedByMistake(t *testing.T) {
+	s, ctx := assetDeletePool(t)
+	tag := newMachine(t, s, ctx)
+
+	// A work order nothing has scheduled goes.
+	num := "WO-" + uuid.NewString()[:8]
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO mes_work_orders (num, title, asset_tag) VALUES ($1,'Probe',$2)`, num, tag); err != nil {
+		t.Fatalf("work order: %v", err)
+	}
+	if err := s.DeleteWorkOrder(ctx, num); err != nil {
+		t.Fatalf("delete work order: %v", err)
+	}
+	if err := s.DeleteWorkOrder(ctx, num); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete: want ErrNotFound, got %v", err)
+	}
+
+	// One a schedule block points at is refused: that is a real foreign key.
+	//
+	// mes_schedule_blocks is one of the tables migration 010 drops when it is
+	// empty, so whether this case can run at all depends on the deployment --
+	// which is the same variance deleteRegisterRow resolves before counting.
+	var hasBlocks bool
+	if err := s.Pool().QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM information_schema.tables
+		               WHERE table_schema = current_schema() AND table_name = 'mes_schedule_blocks')`).
+		Scan(&hasBlocks); err != nil {
+		t.Fatalf("table check: %v", err)
+	}
+	booked := "WO-" + uuid.NewString()[:8]
+	var woID string
+	if err := s.Pool().QueryRow(ctx,
+		`INSERT INTO mes_work_orders (num, title, asset_tag) VALUES ($1,'Booked',$2) RETURNING id::text`,
+		booked, tag).Scan(&woID); err != nil {
+		t.Fatalf("work order: %v", err)
+	}
+	if hasBlocks {
+		if _, err := s.Pool().Exec(ctx, `
+			INSERT INTO mes_schedule_blocks (asset_tag, starts_at, ends_at, work_order_id)
+			VALUES ($1, NOW(), NOW() + interval '1 hour', $2)`, tag, woID); err != nil {
+			t.Fatalf("schedule block: %v", err)
+		}
+		if err := s.DeleteWorkOrder(ctx, booked); !errors.Is(err, ErrConflict) {
+			t.Fatalf("scheduled work order: want ErrConflict, got %v", err)
+		}
+	} else if err := s.DeleteWorkOrder(ctx, booked); err != nil {
+		// No schedule table here, so nothing can be holding it.
+		t.Fatalf("unscheduled work order should delete: %v", err)
+	}
+
+	// Downtime, PM schedules and energy readings are referenced by nothing.
+	var dtID string
+	if err := s.Pool().QueryRow(ctx, `
+		INSERT INTO mes_downtime_events (asset_tag, started_at, category, reason)
+		VALUES ($1, NOW(), 'mechanical', 'probe') RETURNING id::text`, tag).Scan(&dtID); err != nil {
+		t.Fatalf("downtime: %v", err)
+	}
+	if err := s.DeleteDowntimeEvent(ctx, dtID); err != nil {
+		t.Fatalf("delete downtime: %v", err)
+	}
+
+	var enID string
+	if err := s.Pool().QueryRow(ctx, `
+		INSERT INTO mes_energy_readings (asset_tag, plant_code, kwh, recorded_at)
+		VALUES ($1, 'x', 1, NOW()) RETURNING id::text`, tag).Scan(&enID); err != nil {
+		t.Skipf("energy readings shape differs here: %v", err)
+	}
+	if err := s.DeleteEnergyReading(ctx, enID); err != nil {
+		t.Fatalf("delete energy reading: %v", err)
+	}
+
+	// A malformed id is the caller's mistake, not a database error.
+	if err := s.DeleteDowntimeEvent(ctx, "not-a-uuid"); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("malformed id: want ErrBadInput, got %v", err)
+	}
+	if err := s.DeleteDowntimeEvent(ctx, uuid.NewString()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id: want ErrNotFound, got %v", err)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -171,4 +172,80 @@ func (s *Store) DeleteSection(ctx context.Context, plantCode, sectionCode string
 		noun: "shop floor", hint: "move its machines first",
 		refs: []tableRef{{"mes_assets", "section_id", "machines"}},
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Records created by mistake
+// ---------------------------------------------------------------------------
+//
+// These are history, not registers, and history is normally corrected rather
+// than removed: a work order is completed or rejected, a downtime event is
+// cancelled, a machine is retired. None of that erases the row, which is right
+// for work that happened.
+//
+// It is wrong for work that did not. A probe, a test run, a reading typed
+// against the wrong machine: those rows are not history, they are noise, and
+// while they exist the machine they name cannot be removed and the shop floor
+// under it cannot be emptied. Three QA pumps held exactly this position in
+// production -- retired, unusable, and permanent, because the only thing
+// standing in the way was a handful of rows nothing could delete.
+
+// DeleteWorkOrder removes a work order.
+//
+// A schedule block pointing at it is a real foreign key, so the delete is
+// refused rather than leaving the calendar entry hanging.
+func (s *Store) DeleteWorkOrder(ctx context.Context, num string) error {
+	num = strings.TrimSpace(num)
+	if num == "" {
+		return ErrBadInput
+	}
+	var id string
+	err := s.pool.QueryRow(ctx, `SELECT id::text FROM mes_work_orders WHERE num = $1`, num).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return s.deleteRegisterRow(ctx, registerDelete{
+		table: "mes_work_orders", keyCol: "id", key: id,
+		noun: "work order", hint: "it is scheduled, so cancel the block first",
+		refs: []tableRef{{"mes_schedule_blocks", "work_order_id", "schedule blocks"}},
+	})
+}
+
+// DeleteDowntimeEvent removes a downtime event. Nothing references one, so the
+// only question is whether it exists.
+func (s *Store) DeleteDowntimeEvent(ctx context.Context, id string) error {
+	return s.deleteByID(ctx, "mes_downtime_events", id)
+}
+
+// DeletePMSchedule removes a preventive-maintenance schedule.
+func (s *Store) DeletePMSchedule(ctx context.Context, id string) error {
+	return s.deleteByID(ctx, "mes_pm_schedules", id)
+}
+
+// DeleteEnergyReading removes one meter reading.
+func (s *Store) DeleteEnergyReading(ctx context.Context, id string) error {
+	return s.deleteByID(ctx, "mes_energy_readings", id)
+}
+
+// deleteByID removes one row of a table nothing refers to.
+//
+// The id is parsed as a uuid before it reaches the query: these are the only
+// deletes here whose key comes straight from a URL, and a malformed one should
+// be a 400 rather than a database error.
+func (s *Store) deleteByID(ctx context.Context, table, id string) error {
+	parsed, err := uuid.Parse(strings.TrimSpace(id))
+	if err != nil {
+		return ErrBadInput
+	}
+	tag, err := s.pool.Exec(ctx, `DELETE FROM `+table+` WHERE id = $1`, parsed)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

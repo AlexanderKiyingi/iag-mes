@@ -164,6 +164,45 @@ func (a *API) CreateAsset(c *gin.Context) {
 // The store counts what the factory still holds -- shop floors and shift
 // patterns by key, technicians, shift logs, KPI snapshots and energy readings
 // by code -- and names them, which writeStoreError returns as a 409.
+// DeleteWorkOrder, DeleteDowntimeEvent, DeletePMSchedule and
+// DeleteEnergyReading remove a record that should never have been written.
+//
+// Completing, rejecting or cancelling is how work that happened is corrected;
+// these are for work that did not -- a probe, a test, a reading typed against
+// the wrong machine. While such a row exists the machine it names cannot be
+// removed, so the noise is load-bearing.
+func (a *API) DeleteWorkOrder(c *gin.Context) {
+	if err := a.Store.DeleteWorkOrder(c.Request.Context(), c.Param("num")); err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (a *API) DeleteDowntimeEvent(c *gin.Context) {
+	if err := a.Store.DeleteDowntimeEvent(c.Request.Context(), c.Param("id")); err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (a *API) DeletePMSchedule(c *gin.Context) {
+	if err := a.Store.DeletePMSchedule(c.Request.Context(), c.Param("id")); err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (a *API) DeleteEnergyReading(c *gin.Context) {
+	if err := a.Store.DeleteEnergyReading(c.Request.Context(), c.Param("id")); err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (a *API) DeletePlant(c *gin.Context) {
 	if err := a.Store.DeletePlant(c.Request.Context(), c.Param("code")); err != nil {
 		writeStoreError(c, err)
