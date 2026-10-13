@@ -608,3 +608,115 @@ func scanAssets(rows pgx.Rows) ([]Asset, error) {
 	}
 	return out, rows.Err()
 }
+
+// assetHistoryTables are every table that names a machine by `asset_tag`.
+//
+// Exactly one of them declares a foreign key (mes_iot_devices, ON DELETE SET
+// NULL); the other fourteen hold a bare TEXT column. Postgres would therefore
+// let a machine be deleted out from under its own history and leave every one
+// of these rows pointing at a tag that no longer exists, so the guard has to be
+// here rather than in the schema.
+var assetHistoryTables = []struct{ table, label string }{
+	{"mes_work_orders", "work orders"},
+	{"mes_downtime_events", "downtime events"},
+	{"mes_production_runs", "production runs"},
+	{"mes_production_orders", "production orders"},
+	{"mes_schedule_blocks", "schedule blocks"},
+	{"mes_pm_schedules", "maintenance schedules"},
+	{"mes_operator_assignments", "operator assignments"},
+	{"mes_kpi_snapshots", "KPI snapshots"},
+	{"mes_machine_telemetry", "telemetry"},
+	{"mes_telemetry_timeseries", "telemetry"},
+	{"mes_asset_telemetry_latest", "telemetry"},
+	{"mes_machine_oee_daily", "daily OEE"},
+	{"mes_energy_readings", "energy readings"},
+	{"mes_iot_devices", "IoT devices"},
+	{"mes_ai_recommendations", "recommendations"},
+}
+
+// DeleteAsset removes a machine that has no history.
+//
+// Deletion is for a machine that should never have existed -- a mistyped tag, a
+// row a probe left behind. A machine that has actually run is retired instead
+// (status `retired`, migration 012), because deleting it would silently orphan
+// the work orders, downtime and telemetry that refer to it by tag.
+//
+// The references are counted before the DELETE and named in the refusal, so a
+// caller is told what is holding the machine rather than being told no.
+func (s *Store) DeleteAsset(ctx context.Context, tag string) error {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return ErrBadInput
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Lock the row so a concurrent write cannot attach history between the
+	// count below and the DELETE.
+	var id uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT id FROM mes_assets WHERE tag = $1 FOR UPDATE`, tag).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	// Which of those tables this deployment actually has, asked once and up
+	// front. Querying a missing table inside the transaction aborts it, and
+	// every statement after that fails with 25P02 -- so the absent ones have to
+	// be filtered out before the counting starts, not recovered from after.
+	names := make([]string, 0, len(assetHistoryTables))
+	for _, t := range assetHistoryTables {
+		names = append(names, t.table)
+	}
+	present := map[string]bool{}
+	rows, err := tx.Query(ctx, `
+		SELECT table_name FROM information_schema.tables
+		WHERE table_schema = current_schema() AND table_name = ANY($1)`, names)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		present[name] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	seen := map[string]bool{}
+	var holding []string
+	for _, t := range assetHistoryTables {
+		if !present[t.table] {
+			continue
+		}
+		var n int
+		// The table name is from the constant list above, never caller input.
+		if err := tx.QueryRow(ctx,
+			`SELECT COUNT(*)::int FROM `+t.table+` WHERE asset_tag = $1`, tag).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 && !seen[t.label] {
+			seen[t.label] = true
+			holding = append(holding, t.label)
+		}
+	}
+	if len(holding) > 0 {
+		return fmt.Errorf("machine %s still has %s — retire it instead of deleting it: %w",
+			tag, strings.Join(holding, ", "), ErrConflict)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM mes_assets WHERE id = $1`, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
