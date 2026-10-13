@@ -65,6 +65,10 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/assets", appmw.RequirePermission("mes.change_asset"), api.CreateAsset)
 		v1.GET("/assets/:tag", appmw.RequirePermission("mes.view_asset"), api.GetAsset)
 		v1.PATCH("/assets/:tag", appmw.RequirePermission("mes.change_asset"), api.PatchAsset)
+		// Same permission as the patch: deleting a machine with no history is a
+		// correction, not a wider power, and a new permission code would have to
+		// be seeded in iag-authentication before anyone held it.
+		v1.DELETE("/assets/:tag", appmw.RequirePermission("mes.change_asset"), api.DeleteAsset)
 		v1.GET("/assets/:tag/telemetry", appmw.RequirePermission("mes.view_telemetry"), api.ListTelemetry)
 		v1.GET("/telemetry/history", appmw.RequirePermission("mes.view_telemetry"), api.ListTelemetryHistory)
 		v1.POST("/telemetry/ingest", appmw.RequirePermission("mes.change_asset"), api.IngestTelemetryBatch)

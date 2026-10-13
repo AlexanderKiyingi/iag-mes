@@ -154,6 +154,19 @@ func (a *API) CreateAsset(c *gin.Context) {
 	c.JSON(http.StatusCreated, item)
 }
 
+// DeleteAsset removes a machine that never should have existed.
+//
+// A machine that has run is retired (PATCH status=retired, migration 012); the
+// store refuses a delete that would orphan history and names what is holding
+// it, which writeStoreError returns as a 409 with that reason.
+func (a *API) DeleteAsset(c *gin.Context) {
+	if err := a.Store.DeleteAsset(c.Request.Context(), c.Param("tag")); err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (a *API) PatchAsset(c *gin.Context) {
 	var patch store.AssetPatch
 	if err := bindJSONCoerced(c, &patch); err != nil {
