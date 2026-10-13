@@ -68,7 +68,14 @@ func writeStoreError(c *gin.Context, err error) {
 		return
 	}
 	if errors.Is(err, store.ErrConflict) {
-		c.JSON(http.StatusConflict, gin.H{"error": "conflict"})
+		// As with bad input: the wrapped text says what is in the way ("2
+		// acceptance tests failed", "waiting for approval"), and a bare
+		// "conflict" left the person on the screen with nothing to act on.
+		msg := "conflict"
+		if err != store.ErrConflict {
+			msg = strings.TrimPrefix(err.Error(), store.ErrConflict.Error()+": ")
+		}
+		c.JSON(http.StatusConflict, gin.H{"error": msg})
 		return
 	}
 	if errors.Is(err, store.ErrBadInput) {

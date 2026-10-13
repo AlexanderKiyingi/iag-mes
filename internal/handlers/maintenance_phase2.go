@@ -119,6 +119,40 @@ func (a *API) signoff(role string) gin.HandlerFunc {
 	}
 }
 
+// handoverPermission lets production sign production's part of a handover
+// with the permission it already has for reporting faults; installer and
+// engineering signatures need maintenance's own.
+func handoverPermission() gin.HandlerFunc {
+	production := appmw.RequireAnyPermission("mes.change_work_order", "mes.report_fault")
+	maintenance := appmw.RequirePermission("mes.change_work_order")
+	return func(c *gin.Context) {
+		if c.Param("party") == "production" {
+			production(c)
+			return
+		}
+		maintenance(c)
+	}
+}
+
+// SignHandover records one party's signature on a commissioning handover:
+// installer, engineering or production. Optional body {signed_by, signed_on,
+// company} for a signature on a paper sheet.
+func (a *API) SignHandover(c *gin.Context) {
+	var in store.HandoverInput
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&in); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	item, err := a.Store.SignHandover(c.Request.Context(), c.Param("num"), c.Param("party"), appmw.ActorName(c), in)
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, item)
+}
+
 func (a *API) ListFailureCodes(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"problems":    store.FailureCatalog.Problems,
@@ -203,4 +237,34 @@ func (a *API) RequestPurchase(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"ref": ref, "origin_system": "maintenance", "status": "sent to procurement"})
+}
+
+// MaintenanceForecast is every preventive job due over a range of dates:
+// ?from=YYYY-MM-DD&to=YYYY-MM-DD&plant=<code>. The range defaults to the next
+// 365 days and may be at most 400.
+func (a *API) MaintenanceForecast(c *gin.Context) {
+	from := time.Now().UTC()
+	if v := c.Query("from"); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "from is a date (YYYY-MM-DD)"})
+			return
+		}
+		from = t
+	}
+	to := from.AddDate(0, 0, 365)
+	if v := c.Query("to"); v != "" {
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "to is a date (YYYY-MM-DD)"})
+			return
+		}
+		to = t
+	}
+	item, err := a.Store.MaintenanceForecast(c.Request.Context(), from, to, c.Query("plant"))
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, item)
 }
