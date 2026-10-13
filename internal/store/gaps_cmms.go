@@ -124,6 +124,11 @@ func (s *Store) CreateWorkOrderFromPM(ctx context.Context, sch PMSchedule, tpl P
 		"pm_template":   tpl.Code,
 		"auto_generated": true,
 	}
+	// The template's parts are the job's planned parts (planned_parts.go).
+	if parts := TemplateParts(tpl); len(parts) > 0 {
+		attrs["parts_planned"] = parts
+		attrs["partsRequired"] = partsLine(parts)
+	}
 	wo := WorkOrder{
 		Num:      num,
 		Title:    fmt.Sprintf("%s — %s", tpl.Name, sch.AssetTag),
@@ -162,6 +167,11 @@ func (s *Store) HasOpenWorkOrderForPMSchedule(ctx context.Context, scheduleID uu
 }
 
 func (s *Store) CreatePMTemplate(ctx context.Context, t PMTemplate) (*PMTemplate, error) {
+	if t.Attrs != nil {
+		if err := NormalizeTemplateParts(t.Attrs); err != nil {
+			return nil, err
+		}
+	}
 	checklist, _ := json.Marshal(t.Checklist)
 	attrs, _ := json.Marshal(t.Attrs)
 	err := s.pool.QueryRow(ctx, `
