@@ -99,6 +99,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/work-orders/:num/failure", appmw.RequirePermission("mes.change_work_order"), api.SetFailure)
 		v1.POST("/work-orders/:num/approve", appmw.RequirePermission("mes.approve_work_order"), api.decideApproval(true))
 		v1.POST("/work-orders/:num/reject", appmw.RequirePermission("mes.approve_work_order"), api.decideApproval(false))
+		v1.DELETE("/work-orders/:num", appmw.RequirePermission("mes.change_work_order"), api.DeleteWorkOrder)
 		v1.GET("/failure-codes", appmw.RequirePermission("mes.view_work_order"), api.ListFailureCodes)
 		// Faults reported from the floor. Anyone who may raise work, or a
 		// production user given mes.report_fault, can report one.
@@ -120,6 +121,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		// may record a stoppage may plan one.
 		v1.POST("/downtime-events/:id/start", appmw.RequirePermission("mes.add_downtime"), api.StartDowntimeEvent)
 		v1.POST("/downtime-events/:id/cancel", appmw.RequirePermission("mes.add_downtime"), api.CancelDowntimeEvent)
+		v1.DELETE("/downtime-events/:id", appmw.RequirePermission("mes.add_downtime"), api.DeleteDowntimeEvent)
 
 		v1.GET("/pm-templates", appmw.RequirePermission("mes.view_work_order"), api.ListPMTemplates)
 		v1.POST("/pm-templates", appmw.RequirePermission("mes.add_work_order"), api.CreatePMTemplate)
@@ -127,6 +129,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/pm-schedules", appmw.RequirePermission("mes.view_work_order"), api.ListPMSchedules)
 		v1.POST("/pm-schedules", appmw.RequirePermission("mes.add_work_order"), api.CreatePMSchedule)
 		v1.PATCH("/pm-schedules/:id", appmw.RequirePermission("mes.change_work_order"), api.PatchPMSchedule)
+		v1.DELETE("/pm-schedules/:id", appmw.RequirePermission("mes.change_work_order"), api.DeletePMSchedule)
 		// Who a work order can be assigned to. The handler and table existed;
 		// nothing routed to them, so every technician field was free text.
 		v1.GET("/technicians", appmw.RequirePermission("mes.view_work_order"), api.ListTechnicians)
@@ -167,6 +170,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 
 		v1.GET("/energy/summary", appmw.RequirePermission("mes.view_energy"), api.EnergySummary)
 		v1.POST("/energy/readings", appmw.RequirePermission("mes.add_energy"), api.RecordEnergyReading)
+		v1.DELETE("/energy/readings/:id", appmw.RequirePermission("mes.add_energy"), api.DeleteEnergyReading)
 
 		v1.GET("/integrations/status", appmw.RequirePermission("mes.view_overview"), api.IntegrationStatus)
 
