@@ -59,6 +59,11 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.GET("/sections", appmw.RequirePermission("mes.view_plant"), api.ListSections)
 		v1.POST("/plants/:code/sections", appmw.RequirePermission("mes.change_plant"), api.CreateSection)
 		v1.PATCH("/plants/:code/sections/:section", appmw.RequirePermission("mes.change_plant"), api.PatchSection)
+		// Removing a factory or a shop floor that holds nothing. Anything with
+		// machines, shift patterns or recorded history is refused, with the rows
+		// in the way named.
+		v1.DELETE("/plants/:code/sections/:section", appmw.RequirePermission("mes.change_plant"), api.DeleteSection)
+		v1.DELETE("/plants/:code", appmw.RequirePermission("mes.change_plant"), api.DeletePlant)
 		v1.GET("/plants/:code/shifts", appmw.RequirePermission("mes.view_shift"), api.ListShiftDefinitions)
 
 		v1.GET("/assets", appmw.RequirePermission("mes.view_asset"), api.ListAssets)

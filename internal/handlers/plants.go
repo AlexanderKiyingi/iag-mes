@@ -167,6 +167,24 @@ func (a *API) DeleteAsset(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// DeletePlant removes a factory with nothing in it.
+func (a *API) DeletePlant(c *gin.Context) {
+	if err := a.Store.DeletePlant(c.Request.Context(), c.Param("code")); err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// DeleteSection removes a shop floor with no machines on it.
+func (a *API) DeleteSection(c *gin.Context) {
+	if err := a.Store.DeleteSection(c.Request.Context(), c.Param("code"), c.Param("section")); err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (a *API) PatchAsset(c *gin.Context) {
 	var patch store.AssetPatch
 	if err := bindJSONCoerced(c, &patch); err != nil {

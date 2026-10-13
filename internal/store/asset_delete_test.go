@@ -188,3 +188,69 @@ func TestPatchAssetRejectsAnUnknownShopFloor(t *testing.T) {
 		t.Fatalf("want ErrBadInput, got %v", err)
 	}
 }
+
+// A shop floor with a machine on it is refused; an empty one goes.
+func TestDeleteSection(t *testing.T) {
+	s, ctx := assetDeletePool(t)
+	tag := newMachine(t, s, ctx)
+
+	var plant, section string
+	if err := s.Pool().QueryRow(ctx, `
+		SELECT p.code, sec.code FROM mes_assets a
+		JOIN mes_sections sec ON sec.id = a.section_id
+		JOIN mes_plants p ON p.id = sec.plant_id WHERE a.tag = $1`, tag).Scan(&plant, &section); err != nil {
+		t.Fatalf("locate: %v", err)
+	}
+
+	if err := s.DeleteSection(ctx, plant, section); !errors.Is(err, ErrConflict) {
+		t.Fatalf("shop floor with a machine: want ErrConflict, got %v", err)
+	}
+	if err := s.DeleteAsset(ctx, tag); err != nil {
+		t.Fatalf("remove the machine: %v", err)
+	}
+	if err := s.DeleteSection(ctx, plant, section); err != nil {
+		t.Fatalf("empty shop floor should delete: %v", err)
+	}
+	if err := s.DeleteSection(ctx, plant, section); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second delete: want ErrNotFound, got %v", err)
+	}
+}
+
+// A factory still holding a shop floor is refused; an empty one goes.
+func TestDeletePlant(t *testing.T) {
+	s, ctx := assetDeletePool(t)
+	tag := newMachine(t, s, ctx)
+
+	var plant, section string
+	if err := s.Pool().QueryRow(ctx, `
+		SELECT p.code, sec.code FROM mes_assets a
+		JOIN mes_sections sec ON sec.id = a.section_id
+		JOIN mes_plants p ON p.id = sec.plant_id WHERE a.tag = $1`, tag).Scan(&plant, &section); err != nil {
+		t.Fatalf("locate: %v", err)
+	}
+
+	if err := s.DeletePlant(ctx, plant); !errors.Is(err, ErrConflict) {
+		t.Fatalf("factory with a shop floor: want ErrConflict, got %v", err)
+	}
+	if err := s.DeleteAsset(ctx, tag); err != nil {
+		t.Fatalf("machine: %v", err)
+	}
+	if err := s.DeleteSection(ctx, plant, section); err != nil {
+		t.Fatalf("section: %v", err)
+	}
+
+	// Still refused while a loose plant_code quotes it — no foreign key says so.
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO mes_technicians (name, plant_code) VALUES ('Tech', $1)`, plant); err != nil {
+		t.Fatalf("technician: %v", err)
+	}
+	if err := s.DeletePlant(ctx, plant); !errors.Is(err, ErrConflict) {
+		t.Fatalf("factory quoted by a technician: want ErrConflict, got %v", err)
+	}
+	if _, err := s.Pool().Exec(ctx, `DELETE FROM mes_technicians WHERE plant_code = $1`, plant); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if err := s.DeletePlant(ctx, plant); err != nil {
+		t.Fatalf("empty factory should delete: %v", err)
+	}
+}
