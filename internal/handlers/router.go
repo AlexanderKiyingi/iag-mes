@@ -69,6 +69,11 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		// correction, not a wider power, and a new permission code would have to
 		// be seeded in iag-authentication before anyone held it.
 		v1.DELETE("/assets/:tag", appmw.RequirePermission("mes.change_asset"), api.DeleteAsset)
+		// Removing a shop floor with no machines, or a factory holding nothing.
+		// The store has had DeleteSection and DeletePlant since #21; these are
+		// the routes that reach them, which that PR lost in a rebase.
+		v1.DELETE("/plants/:code/sections/:section", appmw.RequirePermission("mes.change_plant"), api.DeleteSection)
+		v1.DELETE("/plants/:code", appmw.RequirePermission("mes.change_plant"), api.DeletePlant)
 		v1.GET("/assets/:tag/telemetry", appmw.RequirePermission("mes.view_telemetry"), api.ListTelemetry)
 		v1.GET("/telemetry/history", appmw.RequirePermission("mes.view_telemetry"), api.ListTelemetryHistory)
 		v1.POST("/telemetry/ingest", appmw.RequirePermission("mes.change_asset"), api.IngestTelemetryBatch)

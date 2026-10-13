@@ -159,6 +159,28 @@ func (a *API) CreateAsset(c *gin.Context) {
 // A machine that has run is retired (PATCH status=retired, migration 012); the
 // store refuses a delete that would orphan history and names what is holding
 // it, which writeStoreError returns as a 409 with that reason.
+// DeletePlant removes a factory with nothing in it.
+//
+// The store counts what the factory still holds -- shop floors and shift
+// patterns by key, technicians, shift logs, KPI snapshots and energy readings
+// by code -- and names them, which writeStoreError returns as a 409.
+func (a *API) DeletePlant(c *gin.Context) {
+	if err := a.Store.DeletePlant(c.Request.Context(), c.Param("code")); err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// DeleteSection removes a shop floor with no machines on it.
+func (a *API) DeleteSection(c *gin.Context) {
+	if err := a.Store.DeleteSection(c.Request.Context(), c.Param("code"), c.Param("section")); err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (a *API) DeleteAsset(c *gin.Context) {
 	if err := a.Store.DeleteAsset(c.Request.Context(), c.Param("tag")); err != nil {
 		writeStoreError(c, err)
