@@ -133,3 +133,58 @@ func containsAll(haystack string, needles ...string) bool {
 	}
 	return true
 }
+
+// A machine gets re-sited, so it has to be able to move.
+//
+// AssetPatch carried no section, which meant a client could show a shop-floor
+// field, let someone change it, and drop the change on the floor -- the UPDATE
+// simply never mentioned the column.
+func TestPatchAssetMovesAMachineBetweenShopFloors(t *testing.T) {
+	s, ctx := assetDeletePool(t)
+	tag := newMachine(t, s, ctx)
+
+	before, err := s.GetAssetByTag(ctx, tag)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	// A second floor in the same plant.
+	var dest uuid.UUID
+	if err := s.Pool().QueryRow(ctx,
+		`INSERT INTO mes_sections (plant_id, code, name)
+		 SELECT plant_id, 'sec2', 'Second floor' FROM mes_sections WHERE id = $1
+		 RETURNING id`, before.SectionID).Scan(&dest); err != nil {
+		t.Fatalf("second section: %v", err)
+	}
+
+	moved, err := s.PatchAsset(ctx, tag, AssetPatch{SectionID: &dest})
+	if err != nil {
+		t.Fatalf("move: %v", err)
+	}
+	if moved.SectionID != dest {
+		t.Fatalf("machine did not move: want %s, got %s", dest, moved.SectionID)
+	}
+	if moved.SectionCode != "sec2" {
+		t.Fatalf("section code did not follow the move: %q", moved.SectionCode)
+	}
+
+	// A patch that says nothing about the section leaves it where it is.
+	name := "Renamed"
+	same, err := s.PatchAsset(ctx, tag, AssetPatch{Name: &name})
+	if err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if same.SectionID != dest {
+		t.Fatalf("rename moved the machine: %s", same.SectionID)
+	}
+}
+
+// A shop floor that does not exist is the caller's mistake, not a 500.
+func TestPatchAssetRejectsAnUnknownShopFloor(t *testing.T) {
+	s, ctx := assetDeletePool(t)
+	tag := newMachine(t, s, ctx)
+	ghost := uuid.New()
+	if _, err := s.PatchAsset(ctx, tag, AssetPatch{SectionID: &ghost}); !errors.Is(err, ErrBadInput) {
+		t.Fatalf("want ErrBadInput, got %v", err)
+	}
+}

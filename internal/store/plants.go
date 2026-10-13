@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type Plant struct {
@@ -452,13 +453,23 @@ func (s *Store) PatchAsset(ctx context.Context, tag string, patch AssetPatch) (*
 	if patch.PlantID != nil {
 		cur.PlantID = patch.PlantID
 	}
+	if patch.SectionID != nil {
+		cur.SectionID = *patch.SectionID
+	}
 	attrs, _ := json.Marshal(cur.Attrs)
 	_, err = s.pool.Exec(ctx, `
 		UPDATE mes_assets SET name=$2, status=$3, oee_pct=$4, mtbf_hours=$5, attrs=$6::jsonb,
-		    purchased_on=$7, location=$8, capacity=$9, capacity_unit=$10, plant_id=$11, updated_at=NOW()
+		    purchased_on=$7, location=$8, capacity=$9, capacity_unit=$10, plant_id=$11,
+		    section_id=$12, updated_at=NOW()
 		WHERE tag=$1`, tag, cur.Name, cur.Status, cur.OEEPct, cur.MTBFHours, attrs,
-		cur.PurchasedOn, cur.Location, cur.Capacity, cur.CapacityUnit, cur.PlantID)
+		cur.PurchasedOn, cur.Location, cur.Capacity, cur.CapacityUnit, cur.PlantID, cur.SectionID)
 	if err != nil {
+		// section_id is a foreign key; a section that does not exist is the
+		// caller's mistake, not a server fault.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return nil, fmt.Errorf("no such shop floor: %w", ErrBadInput)
+		}
 		return nil, err
 	}
 	updated, err := s.GetAssetByTag(ctx, tag)
@@ -480,6 +491,10 @@ type AssetPatch struct {
 	Capacity     *float64       `json:"capacity"`
 	CapacityUnit *string        `json:"capacity_unit"`
 	PlantID      *uuid.UUID     `json:"plant_id"`
+	// Which shop floor the machine stands on. A machine gets re-sited, and the
+	// section is not part of its identity -- the tag is -- so it moves. Without
+	// this a client could show the field and never be able to change it.
+	SectionID *uuid.UUID `json:"section_id"`
 }
 
 type assetScanner interface {
