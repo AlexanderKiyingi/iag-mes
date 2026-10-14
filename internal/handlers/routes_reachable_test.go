@@ -30,6 +30,8 @@ func TestDeleteRoutesAreRegistered(t *testing.T) {
 		"DELETE /api/v1/downtime-events/:id",
 		"DELETE /api/v1/pm-schedules/:id",
 		"DELETE /api/v1/energy/readings/:id",
+		// A delete needs a list, or nothing can learn the id it takes.
+		"GET /api/v1/energy/readings",
 	} {
 		if !registered[want] {
 			t.Errorf("no route for %s — the store can do it but nothing can reach it", want)

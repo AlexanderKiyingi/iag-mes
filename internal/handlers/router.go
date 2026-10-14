@@ -169,6 +169,7 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/ai/recommendations/:id/dismiss", appmw.RequirePermission("mes.change_ai"), api.DismissAIRecommendation)
 
 		v1.GET("/energy/summary", appmw.RequirePermission("mes.view_energy"), api.EnergySummary)
+		v1.GET("/energy/readings", appmw.RequirePermission("mes.view_energy"), api.ListEnergyReadings)
 		v1.POST("/energy/readings", appmw.RequirePermission("mes.add_energy"), api.RecordEnergyReading)
 		v1.DELETE("/energy/readings/:id", appmw.RequirePermission("mes.add_energy"), api.DeleteEnergyReading)
 

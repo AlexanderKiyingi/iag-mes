@@ -392,3 +392,64 @@ func TestDeleteRecordsCreatedByMistake(t *testing.T) {
 		t.Fatalf("unknown id: want ErrNotFound, got %v", err)
 	}
 }
+
+// A reading can be found before it is deleted.
+//
+// Only the summary was exposed, which is the right shape for a dashboard and
+// the wrong one for correcting a mistake: DeleteEnergyReading takes an id and
+// nothing could tell you one. Three probe readings were enough to keep a
+// machine, its shop floor and its factory in the register permanently.
+func TestListEnergyReadingsFindsWhatDeleteNeeds(t *testing.T) {
+	s, ctx := assetDeletePool(t)
+	tag := newMachine(t, s, ctx)
+
+	for i := 0; i < 3; i++ {
+		if err := s.RecordEnergyReading(ctx, EnergyReading{
+			PlantCode: "zz-energy", AssetTag: &tag, KWh: float64(i + 1), TariffBand: "standard",
+		}); err != nil {
+			t.Fatalf("record: %v", err)
+		}
+	}
+
+	mine, err := s.ListEnergyReadings(ctx, "", tag, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(mine) != 3 {
+		t.Fatalf("want 3 readings for %s, got %d", tag, len(mine))
+	}
+
+	// The filter has to be a filter: another machine's readings must not appear.
+	other := newMachine(t, s, ctx)
+	if err := s.RecordEnergyReading(ctx, EnergyReading{
+		PlantCode: "zz-energy", AssetTag: &other, KWh: 9, TariffBand: "standard",
+	}); err != nil {
+		t.Fatalf("record other: %v", err)
+	}
+	again, err := s.ListEnergyReadings(ctx, "", tag, 0)
+	if err != nil {
+		t.Fatalf("list again: %v", err)
+	}
+	if len(again) != 3 {
+		t.Fatalf("filter leaked another machine's readings: %d", len(again))
+	}
+
+	// And the id it returns is the one the delete takes.
+	for _, r := range again {
+		if err := s.DeleteEnergyReading(ctx, r.ID.String()); err != nil {
+			t.Fatalf("delete %s: %v", r.ID, err)
+		}
+	}
+	left, err := s.ListEnergyReadings(ctx, "", tag, 0)
+	if err != nil {
+		t.Fatalf("list after: %v", err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("%d readings left after deleting them all", len(left))
+	}
+
+	// With its readings gone the machine can be removed, which is the point.
+	if err := s.DeleteAsset(ctx, tag); err != nil {
+		t.Fatalf("machine should delete once its readings are gone: %v", err)
+	}
+}

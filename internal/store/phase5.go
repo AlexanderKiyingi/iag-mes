@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -114,6 +115,45 @@ func (s *Store) RecordEnergyReading(ctx context.Context, r EnergyReading) error 
 		VALUES ($1,$2,$3,COALESCE(NULLIF($4,''),'standard'),COALESCE($5,NOW()))`,
 		r.PlantCode, r.AssetTag, r.KWh, r.TariffBand, r.RecordedAt)
 	return err
+}
+
+// ListEnergyReadings returns individual readings, newest first.
+//
+// Only the summary was exposed, which is the right shape for a dashboard and
+// the wrong one for correcting a mistake: a reading typed against the wrong
+// machine could be deleted by id, and nothing could tell you the id. That made
+// three probe readings enough to keep a machine, its shop floor and its factory
+// in the register permanently.
+func (s *Store) ListEnergyReadings(ctx context.Context, plantCode, assetTag string, limit int) ([]EnergyReading, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	q := `SELECT id, plant_code, asset_tag, kwh, tariff_band, recorded_at
+	      FROM mes_energy_readings WHERE 1=1`
+	args := []any{}
+	if plantCode != "" {
+		args = append(args, plantCode)
+		q += fmt.Sprintf(` AND plant_code = $%d`, len(args))
+	}
+	if assetTag != "" {
+		args = append(args, assetTag)
+		q += fmt.Sprintf(` AND asset_tag = $%d`, len(args))
+	}
+	q += fmt.Sprintf(` ORDER BY recorded_at DESC LIMIT %d`, limit)
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []EnergyReading{}
+	for rows.Next() {
+		var r EnergyReading
+		if err := rows.Scan(&r.ID, &r.PlantCode, &r.AssetTag, &r.KWh, &r.TariffBand, &r.RecordedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) EnergySummary(ctx context.Context, plantCode string, since time.Time) (map[string]float64, error) {
