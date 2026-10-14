@@ -241,6 +241,16 @@ func TestDeletePlant(t *testing.T) {
 		t.Fatalf("section: %v", err)
 	}
 
+	// A shift pattern does not block the factory: it is configuration of the
+	// factory with no existence apart from it, and no endpoint lists or removes
+	// one, so counting it as a reference left a factory with no shop floors and
+	// no machines permanently undeletable.
+	if _, err := s.Pool().Exec(ctx, `
+		INSERT INTO mes_shift_definitions (plant_id, name, start_time, end_time)
+		SELECT id, 'Day', '06:00', '14:00' FROM mes_plants WHERE code = $1`, plant); err != nil {
+		t.Fatalf("shift definition: %v", err)
+	}
+
 	// Still refused while a loose plant_code quotes it — no foreign key says so.
 	if _, err := s.Pool().Exec(ctx,
 		`INSERT INTO mes_technicians (name, plant_code) VALUES ('Tech', $1)`, plant); err != nil {
@@ -254,6 +264,16 @@ func TestDeletePlant(t *testing.T) {
 	}
 	if err := s.DeletePlant(ctx, plant); err != nil {
 		t.Fatalf("empty factory should delete: %v", err)
+	}
+	// Its roster went with it rather than being left behind.
+	var orphans int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT COUNT(*) FROM mes_shift_definitions sd
+		 LEFT JOIN mes_plants p ON p.id = sd.plant_id WHERE p.id IS NULL`).Scan(&orphans); err != nil {
+		t.Fatalf("orphan check: %v", err)
+	}
+	if orphans != 0 {
+		t.Fatalf("%d shift patterns left pointing at no factory", orphans)
 	}
 }
 
