@@ -125,19 +125,30 @@ func (s *Store) DeletePlant(ctx context.Context, code string) error {
 	if code == "" {
 		return ErrBadInput
 	}
-	// Shop floors and shift patterns hang off plant_id, so they are counted by
-	// join rather than by code.
-	var inner int
-	err := s.pool.QueryRow(ctx, `
-		SELECT (SELECT COUNT(*) FROM mes_sections sec JOIN mes_plants p ON p.id = sec.plant_id WHERE p.code = $1)
-		     + (SELECT COUNT(*) FROM mes_shift_definitions sd JOIN mes_plants p ON p.id = sd.plant_id WHERE p.code = $1)`,
-		code).Scan(&inner)
-	if err != nil {
+	// Shop floors hang off plant_id, so they are counted by join rather than by
+	// code. They are a real blocker: a shop floor holds machines, which hold
+	// history.
+	var floors int
+	if err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM mes_sections sec
+		JOIN mes_plants p ON p.id = sec.plant_id WHERE p.code = $1`, code).Scan(&floors); err != nil {
 		return err
 	}
-	if inner > 0 {
-		return fmt.Errorf("factory %s still has shop floors or shift patterns — empty it first, or set it inactive: %w",
+	if floors > 0 {
+		return fmt.Errorf("factory %s still has shop floors — empty it first, or set it inactive: %w",
 			code, ErrConflict)
+	}
+
+	// Shift patterns are not a blocker. A roster is configuration of the
+	// factory with no existence apart from it -- nothing references
+	// mes_shift_definitions -- so it goes when the factory goes. Counting it as
+	// a reference made a factory with no shop floors and no machines
+	// undeletable, and no endpoint lists or removes a shift pattern, so there
+	// was no way out at all.
+	if _, err := s.pool.Exec(ctx, `
+		DELETE FROM mes_shift_definitions sd
+		USING mes_plants p WHERE p.id = sd.plant_id AND p.code = $1`, code); err != nil {
+		return err
 	}
 	return s.deleteRegisterRow(ctx, registerDelete{
 		table: "mes_plants", keyCol: "code", key: code,
