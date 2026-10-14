@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -189,6 +190,20 @@ func (a *API) SubmitQCSample(c *gin.Context) {
 
 func (a *API) ListIntegrationCalls(c *gin.Context) {
 	items, err := a.Store.ListIntegrationCalls(c.Request.Context(), c.Query("target"), 50)
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// ListEnergyReadings returns individual readings so one typed against the
+// wrong machine can be found and removed. Only the summary was exposed, which
+// left the delete verb with no way to learn an id.
+func (a *API) ListEnergyReadings(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	items, err := a.Store.ListEnergyReadings(c.Request.Context(),
+		c.Query("plant"), c.Query("asset"), limit)
 	if err != nil {
 		writeStoreError(c, err)
 		return
