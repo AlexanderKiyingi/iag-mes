@@ -7,7 +7,7 @@ type QualityControl struct {
 }
 
 func NewQualityControl(baseURL, tokenURL, clientID, clientSecret string) *QualityControl {
-	return &QualityControl{baseClient: newBase(baseURL, tokenURL, clientID, clientSecret, "iag.quality-control")}
+	return &QualityControl{baseClient: newBase(baseURL, tokenURL, clientID, clientSecret, "iag.quality")}
 }
 
 func (c *QualityControl) Enabled() bool { return c != nil && c.enabled() }
