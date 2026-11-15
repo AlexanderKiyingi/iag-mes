@@ -20,6 +20,7 @@ import (
 
 var (
 	ErrIoTDeviceNotFound = errors.New("iot device not found")
+	ErrIoTUnknownAsset   = errors.New("unknown assetTag — register the machine on Assets first")
 )
 
 type IoTDevice struct {
@@ -57,10 +58,27 @@ func hashMachineAPIKey(plaintext string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func (s *Store) ensureAssetTag(ctx context.Context, tag string) error {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return nil
+	}
+	var one int
+	err := s.pool.QueryRow(ctx, `SELECT 1 FROM mes_assets WHERE tag = $1`, tag).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrIoTUnknownAsset
+	}
+	return err
+}
+
 func (s *Store) CreateIoTDevice(ctx context.Context, in CreateIoTDeviceInput) (*CreatedIoTDevice, error) {
 	serial := strings.TrimSpace(in.Serial)
 	if serial == "" {
 		return nil, errors.New("serial required")
+	}
+	assetTag := strings.TrimSpace(in.AssetTag)
+	if err := s.ensureAssetTag(ctx, assetTag); err != nil {
+		return nil, err
 	}
 	var keyHash, plaintext string
 	if in.IssueKey {
@@ -77,7 +95,7 @@ func (s *Store) CreateIoTDevice(ctx context.Context, in CreateIoTDeviceInput) (*
 		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''))
 		RETURNING id, serial, COALESCE(label,''), COALESCE(asset_tag,''),
 		          api_key_hash IS NOT NULL, is_active, last_seen, COALESCE(last_ip,''), created_at`,
-		serial, strings.TrimSpace(in.Label), strings.TrimSpace(in.AssetTag), keyHash,
+		serial, strings.TrimSpace(in.Label), assetTag, keyHash,
 	).Scan(
 		&d.ID, &d.Serial, &d.Label, &d.AssetTag,
 		&d.HasAPIKey, &d.IsActive, &d.LastSeen, &d.LastIP, &d.CreatedAt,
@@ -141,6 +159,9 @@ func (s *Store) UpdateIoTDevice(ctx context.Context, id int64, in UpdateIoTDevic
 	}
 	if in.AssetTag != nil {
 		asset = strings.TrimSpace(*in.AssetTag)
+		if err := s.ensureAssetTag(ctx, asset); err != nil {
+			return nil, err
+		}
 	}
 	if in.IsActive != nil {
 		active = *in.IsActive

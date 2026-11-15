@@ -25,7 +25,9 @@ type createIoTDeviceBody struct {
 	Serial   string `json:"serial" binding:"required"`
 	Label    string `json:"label"`
 	AssetTag string `json:"assetTag"`
-	IssueKey bool   `json:"issueKey"`
+	// Pointer so omitted issueKey defaults to true (ingest needs a key).
+	// Explicit false still creates a registry row without a key.
+	IssueKey *bool `json:"issueKey"`
 }
 
 type updateIoTDeviceBody struct {
@@ -49,14 +51,22 @@ func (a *API) CreateIoTDevice(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	issueKey := true
+	if body.IssueKey != nil {
+		issueKey = *body.IssueKey
+	}
 	created, err := a.Store.CreateIoTDevice(c.Request.Context(), store.CreateIoTDeviceInput{
 		Serial:   body.Serial,
 		Label:    body.Label,
 		AssetTag: body.AssetTag,
-		IssueKey: body.IssueKey,
+		IssueKey: issueKey,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		status := http.StatusBadRequest
+		if errors.Is(err, store.ErrIoTUnknownAsset) {
+			status = http.StatusBadRequest
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, created)
