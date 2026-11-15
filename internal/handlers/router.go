@@ -79,6 +79,15 @@ func NewRouter(deps RouterDeps) *gin.Engine {
 		v1.POST("/telemetry/ingest", appmw.RequirePermission("mes.change_asset"), api.IngestTelemetryBatch)
 		v1.POST("/assets/:tag/telemetry", appmw.RequirePermission("mes.change_asset"), api.UpsertTelemetry)
 
+		// Machine-telemetry device registry (edge/machine-telemetry). Keys issued
+		// here authenticate POST /api/iot/readings on the ingest service.
+		v1.GET("/iot/devices", appmw.RequirePermission("mes.manage_iot_device"), api.ListIoTDevices)
+		v1.POST("/iot/devices", appmw.RequirePermission("mes.manage_iot_device"), api.CreateIoTDevice)
+		v1.GET("/iot/devices/:id", appmw.RequirePermission("mes.manage_iot_device"), api.GetIoTDevice)
+		v1.PATCH("/iot/devices/:id", appmw.RequirePermission("mes.manage_iot_device"), api.PatchIoTDevice)
+		v1.POST("/iot/devices/:id/rotate-key", appmw.RequirePermission("mes.manage_iot_device"), api.RotateIoTDeviceKey)
+		v1.GET("/iot/ingestion", appmw.RequirePermission("mes.manage_iot_device"), api.MachineTelemetryIngestionGuide)
+
 		v1.GET("/work-orders", appmw.RequirePermission("mes.view_work_order"), api.ListWorkOrders)
 		v1.POST("/work-orders", appmw.RequirePermission("mes.add_work_order"), api.CreateWorkOrder)
 		v1.GET("/work-orders/:num", appmw.RequirePermission("mes.view_work_order"), api.GetWorkOrder)

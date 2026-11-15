@@ -22,6 +22,7 @@ func PermissionDescriptors() []PermissionDescriptor {
 		{"mes.view_alert", "View alerts and rules"},
 		{"mes.ack_alert", "Acknowledge or resolve alerts"},
 		{"mes.view_telemetry", "View latest asset telemetry"},
+		{"mes.manage_iot_device", "Register machine IoT devices and rotate ingest API keys"},
 		{"mes.view_ai", "View AI recommendations"},
 		{"mes.change_ai", "Accept or dismiss AI recommendations"},
 		{"mes.view_energy", "View energy readings and insights"},
