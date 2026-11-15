@@ -45,7 +45,9 @@ POST /production-runs/{id}/complete
 | Work orders | `GET /work-orders`, `POST /work-orders`, `POST /work-orders/:num/complete` |
 | Downtime | `GET /downtime-events`, `POST /downtime-events` |
 | Maintenance / PM | `GET /pm-templates`, `GET /pm-schedules`, `GET /maintenance/calendar` |
-| Live telemetry | `GET /assets/:tag/telemetry`, `POST /telemetry/ingest` |
+| Live telemetry | `GET /assets/:tag/telemetry`, `POST /telemetry/ingest` (JWT/EAV) |
+| Machine IoT devices | `GET/POST /iot/devices`, `GET /iot/ingestion` — device keys for edge ingest |
+| Machine IoT ingest (devices) | Gateway `POST /api/v1/mes/api/iot/readings` → private `machine-telemetry` (not the MES process) |
 | KPIs / alerts | `GET /kpis/snapshots`, `GET /alerts` |
 
 ## Permissions

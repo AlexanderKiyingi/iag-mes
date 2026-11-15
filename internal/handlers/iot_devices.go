@@ -141,7 +141,7 @@ func (a *API) MachineTelemetryIngestionGuide(c *gin.Context) {
 	if base == "" {
 		base = strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_GATEWAY_ORIGIN")), "/")
 		if base != "" {
-			base += "/api/v1/production/api/iot/readings"
+			base += "/api/v1/mes/api/iot/readings"
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{
