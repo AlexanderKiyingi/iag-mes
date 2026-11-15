@@ -27,7 +27,8 @@ COPY . .
 # exist inside the build container, so re-apply the vendored replace before build.
 RUN go mod edit -replace=github.com/alvor-technologies/iag-platform-go=${PLATFORM_GO_DEP} \
     && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /mes ./cmd/server \
-    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /mes-jobs ./cmd/mes-jobs
+    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /mes-jobs ./cmd/mes-jobs \
+    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /mes-migrate ./cmd/migrate
 
 FROM base AS build-monorepo
 COPY --from=platform-go-copy ${PLATFORM_GO_DEP} ${PLATFORM_GO_DEP}
@@ -37,32 +38,39 @@ RUN go mod edit -replace=github.com/alvor-technologies/iag-platform-go=${PLATFOR
     && go mod download
 COPY services/operations/mes/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /mes ./cmd/server \
-    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /mes-jobs ./cmd/mes-jobs
+    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /mes-jobs ./cmd/mes-jobs \
+    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /mes-migrate ./cmd/migrate
 
 FROM alpine:3.21 AS monorepo
 RUN apk add --no-cache ca-certificates tzdata wget
 WORKDIR /app
 COPY --from=build-monorepo /mes /app/mes
 COPY --from=build-monorepo /mes-jobs /app/mes-jobs
+COPY --from=build-monorepo /mes-migrate /app/migrate
+COPY services/operations/mes/scripts/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 ENV PORT=4003 \
     GIN_MODE=release \
     AUTO_MIGRATE=false
 EXPOSE 4003
-HEALTHCHECK --interval=15s --timeout=5s --start-period=25s --retries=5 \
+HEALTHCHECK --interval=15s --timeout=5s --start-period=45s --retries=5 \
   CMD wget -q -O /dev/null http://127.0.0.1:4003/ready || exit 1
 USER nobody
-ENTRYPOINT ["/app/mes"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 
 FROM alpine:3.21 AS standalone
 RUN apk add --no-cache ca-certificates tzdata wget
 WORKDIR /app
 COPY --from=build-standalone /mes /app/mes
 COPY --from=build-standalone /mes-jobs /app/mes-jobs
+COPY --from=build-standalone /mes-migrate /app/migrate
+COPY scripts/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 ENV PORT=4003 \
     GIN_MODE=release \
     AUTO_MIGRATE=false
 EXPOSE 4003
-HEALTHCHECK --interval=15s --timeout=5s --start-period=25s --retries=5 \
+HEALTHCHECK --interval=15s --timeout=5s --start-period=45s --retries=5 \
   CMD wget -q -O /dev/null http://127.0.0.1:4003/ready || exit 1
 USER nobody
-ENTRYPOINT ["/app/mes"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

@@ -81,7 +81,8 @@ func main() {
 		}
 		if len(pending) > 0 {
 			log.Fatalf("refusing to serve: %d migration(s) not applied: %s\n"+
-				"apply them out of band, then redeploy:\n"+
+				"the container entrypoint runs /app/migrate before this binary;\n"+
+				"if you still see this, migrate failed — check boot logs, or run:\n"+
 				"  DATABASE_URL=... go run ./cmd/migrate",
 				len(pending), strings.Join(pending, ", "))
 		}
